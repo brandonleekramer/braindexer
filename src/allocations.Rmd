@@ -1,0 +1,18 @@
+---
+title: "Allocation Test"
+author: "BK"
+date: "2023-11-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library("tidyverse")
+
+```
+
+```{r}
+projected_cost_per_query = 0.00001
+projected_queries_per_month = 10000000
+projected_query_fees = (projected_cost_per_query * projected_queries_per_month)
+str_c(projected_query_fees, " GRT revenue for ", projected_queries_per_month, " queries")
+```
