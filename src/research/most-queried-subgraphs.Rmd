@@ -1,0 +1,85 @@
+---
+output: html_document
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+
+library("tidyverse")
+library("lubridate")
+library("magick")
+
+query_subgraph = function(api_or_query_key, endpoint, graphql_query){
+  
+  library("ghql")
+  library("jsonlite")
+  
+  graphql_conn <- ghql::GraphqlClient$new(
+    url = endpoint, 
+    headers = list(Authorization = paste0("Bearer ", api_or_query_key)))
+  
+  qry <- Query$new()
+  qry$query('query_table', graphql_query)
+  query_table <- graphql_conn$exec(qry$queries$query_table)
+  query_table <- jsonlite::fromJSON(query_table)
+  query_table <- query_table$data
+  query_table
+}
+
+```
+
+```{r}
+unix_today = as.numeric(as.POSIXct(today(), format="%Y-%m-%d"))
+date_30d_before = (as.Date(today(), format="%d/%m/%Y") - 6)
+unix_30d_before = as.numeric(as.POSIXct(date_30d_before, format="%Y-%m-%d"))
+
+my_query_key = "pWRuYW1lTnRlc3QtcXVlcnkta2V5ZHVzZXJUTesSNU6pKVj6EfyMEkqfErYbirRmc2lnbmVyVE3rEjVOqSlY-hH8jBJKnxK2G4q0aGNoYWluX2lkGaSxaGNvbnRyYWN0VEgvWNNRPjhgNmcEBLNcs_LfZ6dQxQnqFbv8C1tHjhKNtXPDWEvMUYUrfuDUJTFT9JxA7ik7EzT15sBfazw6dbYo9kM6PS3AE86idfR8G7nKfnhMRhs"
+qos_oracle = "https://api.thegraph.com/subgraphs/name/juanmardefago/gateway-qos-oracle"
+
+top_subgraphs_by_query_volume = str_c('{
+  queryDailyDataPoints(
+    first: 1000
+    where: {
+      gateway_id: "mainnet-arbitrum", 
+      chain_id: "mainnet", 
+      dayStart_gt: "',unix_30d_before,'"}
+    orderBy: query_count
+    orderDirection: desc
+  ) {
+    subgraphDeployment {
+      id
+    }
+    query_count
+    gateway_query_success_rate
+    avg_gateway_latency_ms
+    gateway_id
+    chain_id
+    dayStart
+  }
+}')
+
+top_subgraphs = query_subgraph(my_query_key, qos_oracle, top_subgraphs_by_query_volume)
+top_subgraphs = as.data.frame(top_subgraphs$queryDailyDataPoints)
+```
+
+```{r}
+top_subgraphs %>% 
+  unnest(subgraphDeployment) %>% 
+  mutate(query_count = as.numeric(query_count)) %>% 
+  group_by(id) %>% 
+  summarise(query_count = sum(query_count)) %>% 
+  arrange(-query_count)
+```
+
+Then search for them here: https://arbitrum.graphscan.io/#subgraphs
+
+
+
+
+
+
+
+
+
+
+

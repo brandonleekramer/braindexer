@@ -1,0 +1,130 @@
+---
+output: html_document
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+
+# open packages
+library("tidyverse")
+library("janitor")
+library("coinmarketcapr")
+library("notionR")
+
+query_subgraph = function(api_or_query_key, endpoint, graphql_query){
+  
+  library("ghql")
+  library("jsonlite")
+  
+  graphql_conn <- ghql::GraphqlClient$new(
+    url = endpoint, 
+    headers = list(Authorization = paste0("Bearer ", api_or_query_key)))
+  
+  qry <- Query$new()
+  qry$query('query_table', graphql_query)
+  query_table <- graphql_conn$exec(qry$queries$query_table)
+  query_table <- jsonlite::fromJSON(query_table)
+  query_table <- query_table$data
+  query_table
+}
+
+my_query_key = "pWRuYW1lTnRlc3QtcXVlcnkta2V5ZHVzZXJUTesSNU6pKVj6EfyMEkqfErYbirRmc2lnbmVyVE3rEjVOqSlY-hH8jBJKnxK2G4q0aGNoYWluX2lkGaSxaGNvbnRyYWN0VEgvWNNRPjhgNmcEBLNcs_LfZ6dQxQnqFbv8C1tHjhKNtXPDWEvMUYUrfuDUJTFT9JxA7ik7EzT15sBfazw6dbYo9kM6PS3AE86idfR8G7nKfnhMRhs"
+qos_oracle = "https://api.thegraph.com/subgraphs/name/graphprotocol/graph-analytics-arbitrum"
+
+network_stats = str_c('{
+  graphNetworks(first: 5) {
+    totalTokensStaked
+    totalDelegatedTokens
+    totalTokensSignalled
+  }
+}')
+
+network_stats = query_subgraph(my_query_key, qos_oracle, network_stats)
+network_stats = network_stats$graphNetworks
+
+# network stats
+indexer_stake = as.numeric(network_stats$totalTokensStaked)*(10^-18)
+delegator_stake = as.numeric(network_stats$totalDelegatedTokens)*(10^-18)
+total_signal = as.numeric(network_stats$totalTokensSignalled)*(10^-18)
+total_stake = (indexer_stake+delegator_stake)
+```
+
+```{r}
+## not done, skip section 
+{
+  subgraphDeployments {
+    id
+    allocationDailyDataPoints(
+      first: 1
+      where: {subgraph_deployment_ipfs_hash: "Qma2AGkEDaTqkvHC8kABTjezh3WXqgPJCAdXGQKBX1srMf", dayStart: "1703030400", query_count_not: "0"}
+    ) {
+      query_count
+    }
+  }
+}
+# https://thegraph.com/hosted-service/subgraph/juanmardefago/gateway-qos-oracle 
+```
+
+
+```{r}
+# subgraph stats
+current_subgraph_signal = as.numeric(str_replace_all("4,226.47",",",""))
+current_subgraph_stake = as.numeric(str_replace_all("3,700,232.00",",",""))
+allocation_proportion = (current_subgraph_signal/total_signal) / 
+                        (current_subgraph_stake / total_stake)
+allocation_proportion
+
+# proposed
+new_subgraph_signal = current_subgraph_signal + 0
+new_subgraph_stake = current_subgraph_stake + 500000
+new_allocation_proportion = (new_subgraph_signal/total_signal) / 
+                            (new_subgraph_stake / total_stake)
+new_allocation_proportion
+```
+
+```{r}
+#      outstanding. floor.     snapshot.    dhedge.    get       pooltogether.  credit-coop
+out = 128237.25 + 500000.00 + 993190.00 + 500000.00 + 100000.00 + 1100000.00 + 973754.00
+
+back_in =1000000+1000000+100000+100000+50000+50000+50000+10000+10000
+
+back_in / out
+out - back_in
+```
+
+```{r}
+# open links 
+# gets braindexer_ops_notion
+braindexer_notion = str_c("https://www.notion.so/braindexer/", "Ops-Dashboard-6f22f4478f8e4649bffc93323a02aa0f#4953ff9c86c04a9285fc98f17e09cd8f")
+# gets braindexer delegations 
+braindexer_explorer_dashboard = str_c("https://thegraph.com/explorer/profile/",
+"0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e?view=Indexing&chain=arbitrum-one")
+# gets network stats
+graph_explorer = "https://thegraph.com/explorer/network?chain=arbitrum-one" 
+# gets subgraph details
+graph_scan = str_c("https://arbitrum.graphscan.io/profile?",
+"id=0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e#indexer-details")
+# gets subgraph entity details 
+ok_graph = "https://okgraph.xyz/"
+# gets indexer docs
+indexer_docs = "https://thegraph.com/docs/en/network/indexing/#actions-queue-cli"
+
+# open in reverse order 
+browseURL(braindexer_explorer_dashboard)
+browseURL(graph_explorer)
+browseURL(graph_scan)
+browseURL(ok_graph)
+browseURL(indexer_docs)
+browseURL(braindexer_notion)
+```
+
+Resources
+
+https://thegraph.com/hosted-service/subgraph/graphprotocol/graph-analytics-arbitrum
+
+
+
+
+
+
+
