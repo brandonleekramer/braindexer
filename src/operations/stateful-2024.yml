@@ -4,6 +4,8 @@
  ### enable collection of query fees on arbitrum 
  
 ### secondary goals: 
+ ### does it makes sense to expand our database size so we can sync larger subgraphs? 
+ ### do we want to add another chain? which one? bk will research
  ### can bk get access to the indexer-agent sql database to run some queries on QoS? 
  ### cost models: validate with orjan bk can do this in allocation mgmt
  ### bk would like to setup qos metrics in grafana (not also know where this connects to)
