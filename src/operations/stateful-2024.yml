@@ -1,3 +1,16 @@
+
+### primary goals: 
+ ### update indexer agent component to enable syncing on all chains without extra work
+ ### enable collection of query fees on arbitrum 
+ 
+### secondary goals: 
+ ### can bk get access to the indexer-agent sql database to run some queries on QoS? 
+ ### cost models: validate with orjan bk can do this in allocation mgmt
+ ### bk would like to setup qos metrics in grafana (not also know where this connects to)
+ ### do we want to add a graphcast (subgraph radio) container? would help with presyncing
+  ### https://docs.graphops.xyz/graphcast/intro + https://github.com/graphops/graphcast-sdk
+ 
+
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -27,10 +40,10 @@ spec:
             - --poi-disputable-epochs=100
             - --epoch-subgraph-endpoint=https://api.thegraph.com/subgraphs/name/graphprotocol/mainnet-epoch-block-oracle
           ports:
-            - name: http
-              containerPort: 7600
             - name: metrics
               containerPort: 7300
+            - name: http
+              containerPort: 7600
             - name: management
               containerPort: 8000
             - name: syncing
@@ -41,7 +54,9 @@ spec:
                 secretKeyRef:
                   name: operator-mnemonic
                   key: words
-              # updated on 01-06-2024
+                  
+            ### Updated Jan 06 2024
+            
             - name: INDEXER_AGENT_INDEXER_ADDRESS
               value: "0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e"
             - name: INDEXER_AGENT_INDEX_NODE_IDS
@@ -66,6 +81,7 @@ spec:
               value: mainnet
             - name: INDEXER_AGENT_ETHEREUM
               # value: http://erigon-eth-mainnet-rpc:8546
+              # need to update, are we really using alchemy for this? 
               value: https://eth-mainnet.g.alchemy.com/v2/QVIJotCYnzNRzDT6HRCJ0gfqzHwqgSxi
             - name: INDEXER_AGENT_GRAPH_NODE_QUERY_ENDPOINT
               value: http://query-node-public:9000
@@ -106,5 +122,3 @@ spec:
               # value: asdasd
             - name: INDEXER_AGENT_GAS_PRICE_MAX
               value: "100"
-              # value: "60"
-              # value: "25"
