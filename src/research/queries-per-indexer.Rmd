@@ -55,6 +55,8 @@ top_indexers_query = str_c('{
     ) {
       subgraph_deployment_ipfs_hash
       query_count
+      total_query_fees
+      avg_query_fee
     }
   }
 }')
@@ -72,6 +74,7 @@ monthly_totals = unnest_longer(qos_indexer_data,
   arrange(-query_count)
 monthly_totals
 ```
+
 ```{r, warning=FALSE, message=FALSE,  fig.align="center", fig.height=3, fig.width=6, echo=FALSE}
 braindexer_checks = monthly_totals %>% 
   filter(query_count > 1000) %>% 
@@ -106,8 +109,6 @@ braindexer_charts = braindexer_checks %>%
     scale_fill_manual(labels=c("Braindexer", "Other"), values=c('#E9A1C9', '#00CED4')) 
 braindexer_charts
 ```
-
-
 
 
 
