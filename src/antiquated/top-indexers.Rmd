@@ -1,0 +1,247 @@
+---
+output: html_document
+---
+
+```{css, echo=FALSE}
+/* this chunk of code centers all of the headings */
+h1, h2, h3, h4, h5 {
+  text-align: center;
+}
+```
+
+<br>
+
+```{r pressure, echo=FALSE, fig.align="center", out.width = '150%'}
+knitr::include_graphics("query-catcher-header.png")
+```
+<br>
+<br>
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+rm(list = ls())
+
+library("tidyverse")
+library("lubridate")
+library("plotly")
+library("DT")
+library("scales")
+
+query_subgraph = function(api_or_query_key, endpoint, graphql_query){
+  
+  library("ghql")
+  library("jsonlite")
+  
+  graphql_conn <- ghql::GraphqlClient$new(
+    url = endpoint, 
+    headers = list(Authorization = paste0("Bearer ", api_or_query_key)))
+  
+  qry <- Query$new()
+  qry$query('query_table', graphql_query)
+  query_table <- graphql_conn$exec(qry$queries$query_table)
+  query_table <- jsonlite::fromJSON(query_table)
+  query_table <- query_table$data
+  query_table
+}
+
+unix_today = as.numeric(as.POSIXct(today(), format="%Y-%m-%d"))
+date_30d_before = (as.Date(today(), format="%d/%m/%Y") - 30)
+unix_30d_before = as.numeric(as.POSIXct(date_30d_before, format="%Y-%m-%d"))
+
+my_query_key = "hosted"
+qos_oracle = "https://api.thegraph.com/subgraphs/name/juanmardefago/gateway-qos-oracle"
+network_subgraph = "https://api.thegraph.com/subgraphs/name/graphprotocol/graph-network-arbitrum"
+top_indexers_query = str_c('{
+  indexers(
+      first: 1000, 
+      orderBy: id, 
+      orderDirection: asc) {
+    id
+    indexerDailyDataPoints(
+      orderBy: query_count,
+      orderDirection: desc,
+      where: {dayStart_gt: "',unix_30d_before,'"}
+    ) {
+      subgraph_deployment_ipfs_hash
+      query_count
+      total_query_fees
+      avg_query_fee
+    }
+  }
+}')
+
+query_subgraph = function(api_or_query_key, endpoint, graphql_query){
+  
+  library("ghql")
+  library("jsonlite")
+  
+  graphql_conn <- ghql::GraphqlClient$new(
+    url = endpoint, 
+    headers = list(Authorization = paste0("Bearer ", api_or_query_key)))
+  
+  qry <- Query$new()
+  qry$query('query_table', graphql_query)
+  query_table <- graphql_conn$exec(qry$queries$query_table)
+  query_table <- jsonlite::fromJSON(query_table)
+  query_table <- query_table$data
+  query_table
+}
+
+subgraphs_metadata_query = str_c('{
+  subgraphs(first: 1000, where: {active: true}) {
+    metadata {
+      displayName
+    }
+    currentVersion {
+      subgraphDeployment {
+        manifest {
+          id
+          network
+        }
+      }
+    }
+  }
+}')
+
+subgraphs_metadata = query_subgraph(my_query_key, network_subgraph, subgraphs_metadata_query)
+subgraphs_metadata = subgraphs_metadata$subgraphs 
+for (var in list("metadata", "currentVersion", "subgraphDeployment", "manifest")){
+  subgraphs_metadata = unnest_longer(subgraphs_metadata, 
+                                     var, indices_include = FALSE) %>% unnest(var)
+}
+
+qos_indexer_data = query_subgraph(my_query_key, qos_oracle, top_indexers_query)
+qos_indexer_data = qos_indexer_data$indexers
+
+monthly_totals = unnest_longer(qos_indexer_data,
+              indexerDailyDataPoints,
+              indices_include = FALSE) %>% 
+  unnest(indexerDailyDataPoints) %>% 
+  rename(queries_served = query_count) %>% 
+  mutate(queries_served = as.numeric(queries_served)) %>% 
+  rename(wallet_address = id,
+         query_fees_grt = total_query_fees) 
+
+subgraphs_serving = monthly_totals %>% 
+  group_by(wallet_address) %>% 
+  summarise(subgraphs_serving = n_distinct(subgraph_deployment_ipfs_hash))
+
+monthly_queries = monthly_totals %>% 
+  group_by(wallet_address) %>% 
+  summarise(queries_served = sum(queries_served),
+            query_fees_grt = sum(as.numeric(query_fees_grt)),
+            query_fees_grt = round(sum(query_fees_grt),2)) %>% 
+  arrange(-queries_served) %>% 
+  left_join(subgraphs_serving, by = "wallet_address") %>% 
+  mutate(rank = rank(-queries_served, ties.method= "first")) %>%
+  select(rank, wallet_address, queries_served, subgraphs_serving, query_fees_grt) 
+
+subgraph_totals = monthly_totals %>% 
+  rename(deployment_id = subgraph_deployment_ipfs_hash) %>% 
+  mutate(total_queries = as.numeric(queries_served),
+         total_fees_grt = round(as.numeric(query_fees_grt),2),
+         avg_query_fee = as.numeric(avg_query_fee)) %>% 
+  group_by(deployment_id) %>% 
+  summarize(indexers = n_distinct(wallet_address),
+            total_queries = sum(total_queries),
+            total_fees_grt = sum(total_fees_grt)) %>% 
+  arrange(desc(total_queries)) 
+
+braindexer_subgraphs = monthly_totals %>% 
+  rename(deployment_id = subgraph_deployment_ipfs_hash) %>% 
+  filter(wallet_address == "0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e") %>% 
+  mutate(queries_served = as.numeric(queries_served),
+         query_fees_grt = round(as.numeric(query_fees_grt),2),
+         avg_query_fee = as.numeric(avg_query_fee),
+         wallet_address = if_else(wallet_address == "0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e", 
+                                  str_c("🧠 Braindexer Arbitrum Indexer (0x920-76c1e)"), wallet_address)) %>% 
+  group_by(wallet_address, deployment_id) %>% 
+  summarize(queries_served = sum(queries_served),
+            query_fees_grt = sum(query_fees_grt),
+            avg_query_fee = mean(avg_query_fee)) %>% 
+  left_join(subgraphs_metadata %>% 
+              rename(deployment_id = id), by = "deployment_id") %>% 
+  rename(subgraphs = displayName) %>% 
+  select(wallet_address, subgraphs, queries_served, query_fees_grt, deployment_id) 
+
+```
+
+```{r, fig.height=5.5, fig.width=9.5, fig.align="center", echo=FALSE, warning=FALSE, message=FALSE}
+indexers_plot = monthly_queries %>% 
+  slice_max(queries_served, n = 50) %>% 
+  mutate(wallet_address = str_c(substr(wallet_address, 1, 4),"-",str_sub(wallet_address,-4,-1)),
+         wallet_address = if_else(
+           wallet_address %in% c("0x92-6c1e", "0x84-9948"), "🧠 Braindexer", wallet_address),
+         braindexer = if_else(wallet_address == "🧠 Braindexer", "Braindexer", "Other"),
+         wallet_address = fct_reorder(wallet_address, -queries_served)) %>% 
+  ggplot(aes(x=wallet_address, y=queries_served, color=braindexer, 
+             text=paste('Indexer:', wallet_address, '<br>Query Rank:', rank, 
+                        '<br>30D Queries:', format(queries_served, nsmall=0, big.mark=","),
+                        '<br>Subgraphs Serving:', subgraphs_serving))) + 
+  geom_segment(aes(x=wallet_address, xend=wallet_address, y=0, yend=queries_served)) +
+  geom_point(size=2, alpha=1, stroke=1) +
+  theme_minimal() +
+  theme(panel.background = element_rect(
+        fill = "white", colour = "white", size = 0.5, linetype = "solid"),
+        plot.title = element_text(size=14, face="bold", hjust=0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size=6, family = "Arial", colour="#000000"),
+        axis.text.x = element_text(size=6, angle = 45, vjust = 0.5, hjust=1),
+        axis.text.y = element_text(size=6, family = "Arial", colour="#000000"),
+        legend.position = "none") +
+   labs(title="Queries Served by Indexers (Past 30D)", 
+        y = "Queries Served by Indexer (Past 30D)") +
+   scale_color_manual(values=c("#E9A1C9", "#00CED4")) +
+   scale_y_continuous(labels = comma)
+ggplotly(indexers_plot, tooltip = c("text")) 
+```
+
+```{r, echo=FALSE}
+datatable(monthly_queries %>% 
+            mutate(queries_served = format(queries_served, nsmall=0, big.mark=","),
+                   wallet_address = if_else(
+                     wallet_address == "0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e",
+                     "🧠 Braindexer Arbitrum Indexer (0x920-76c1e)", wallet_address)) %>% 
+            select(wallet_address, queries_served, subgraphs_serving, query_fees_grt) %>% 
+            arrange(desc(queries_served)), 
+          caption = "Top Indexers Serving Queries over Past 30 Days", 
+          rownames = FALSE,  options = list(pageLength = 15))
+```
+
+```{r, echo=FALSE}
+
+braindexer_sync_count = as.character(count(braindexer_subgraphs)$n)
+braindexer_query_count = as.character(format(sum(braindexer_subgraphs$queries_served), nsmall=0, big.mark=","))
+braindexer_fees_count = as.character(round(sum(braindexer_subgraphs$query_fees_grt),2))
+prc_of_network_queries = round(sum(braindexer_subgraphs$queries_served)/sum(subgraph_totals$total_queries)*100,2)
+
+braindexer_table = braindexer_subgraphs %>% 
+  left_join(subgraph_totals, by = "deployment_id") %>% 
+  ungroup() %>% arrange(desc(query_fees_grt)) %>% 
+  mutate(prc_served = round((queries_served/total_queries)*100,2),
+         queries_served = format(queries_served, nsmall=0, big.mark=","),
+         queries_served = str_c(queries_served, " (", prc_served ,"%)"),
+         indexers = as.character(indexers),
+         query_fees_grt = as.character(query_fees_grt)) %>% 
+  select(wallet_address, subgraphs, queries_served, query_fees_grt, indexers, deployment_id) 
+
+datatable(braindexer_table %>%
+            add_row(wallet_address = "📊 Braindexer Total Queries (Past 30D)", 
+                    subgraphs = str_c(braindexer_sync_count, " subgraphs"),
+                    queries_served = str_c(braindexer_query_count, " (",prc_of_network_queries, "%)"),
+                    query_fees_grt = str_c(braindexer_fees_count, " GRT")), 
+          caption = "Queries Served by Braindexer (Past 30D)", 
+          rownames = FALSE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

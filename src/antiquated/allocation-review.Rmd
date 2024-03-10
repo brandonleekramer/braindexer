@@ -1,0 +1,516 @@
+---
+output: html_document
+---
+
+```{css, echo=FALSE}
+/* this chunk of code centers all of the headings */
+h1, h2, h3, h4, h5 {
+  text-align: center;
+}
+```
+
+<br>
+
+```{r pressure, echo=FALSE, fig.align="center", out.width = '150%'}
+knitr::include_graphics("query-catcher-header.png")
+```
+
+<br>
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+#rm(list = ls())
+
+library("tidyverse")
+library("lubridate")
+library("plotly")
+library("DT")
+library("scales")
+library("janitor")
+library("onchainR")
+
+unix_today = as.numeric(as.POSIXct(today(), format="%Y-%m-%d"))
+date_before_1 = (as.Date(today(), format="%d/%m/%Y") - 1)
+unix_before_1 = as.numeric(as.POSIXct(date_before_1, format="%Y-%m-%d"))
+date_before_7 = (as.Date(today(), format="%d/%m/%Y") - 7)
+unix_before_7 = as.numeric(as.POSIXct(date_before_7, format="%Y-%m-%d"))
+date_before_14 = (as.Date(today(), format="%d/%m/%Y") - 14)
+unix_before_14 = as.numeric(as.POSIXct(date_before_7, format="%Y-%m-%d"))
+date_before_30 = (as.Date(today(), format="%d/%m/%Y") - 30)
+unix_before_30 = as.numeric(as.POSIXct(date_before_30, format="%Y-%m-%d"))
+
+my_query_key = "hosted"
+qos_oracle = "https://api.thegraph.com/subgraphs/name/juanmardefago/gateway-qos-oracle"
+network_subgraph = "https://api.thegraph.com/subgraphs/name/graphprotocol/graph-network-arbitrum"
+
+daily_query_volume = str_c('{
+  queryDailyDataPoints(
+    first: 1000
+    where: {
+      gateway_id: "mainnet-arbitrum", 
+      chain_id: "mainnet", 
+      dayStart_gt: "',unix_before_1,'"} 
+    orderBy: query_count
+    orderDirection: desc
+  ) {
+    subgraphDeployment {
+      id
+    }
+    query_count
+    gateway_query_success_rate 
+    avg_gateway_latency_ms
+    total_query_fees
+    gateway_id
+    chain_id
+    dayStart
+  }
+}')
+
+weekly_query_volume = str_c('{
+  queryDailyDataPoints(
+    first: 1000
+    where: {
+      gateway_id: "mainnet-arbitrum", 
+      chain_id: "mainnet", 
+      dayStart_gt: "',unix_before_1,'"} 
+    orderBy: query_count
+    orderDirection: desc
+  ) {
+    subgraphDeployment {
+      id
+    }
+    query_count
+    gateway_query_success_rate 
+    avg_gateway_latency_ms
+    total_query_fees
+    gateway_id
+    chain_id
+    dayStart
+  }
+}')
+
+subgraphs_metadata_query = str_c('{
+  subgraphs(first: 1000, where: {active: true}) {
+    metadata {
+      displayName
+    }
+    currentVersion {
+      subgraphDeployment {
+        manifest {
+          id
+          network
+        }
+      }
+    }
+  }
+}')
+
+top_indexers_query = str_c('{
+  indexers(
+      first: 1000, 
+      orderBy: id, 
+      orderDirection: asc) {
+    id
+    indexerDailyDataPoints(
+      orderBy: query_count,
+      orderDirection: desc,
+      where: {dayStart_gt: "',unix_before_1,'"}
+    ) {
+      subgraph_deployment_ipfs_hash
+      query_count
+      total_query_fees
+      avg_query_fee
+    }
+  }
+}')
+
+daily_subgraphs = query_hosted_subgraph(daily_query_volume, qos_oracle)
+daily_subgraphs = as.data.frame(daily_subgraphs$queryDailyDataPoints) %>% 
+  unnest(subgraphDeployment) %>% 
+  mutate(query_count = as.numeric(query_count)) %>% 
+  rename(deployment_id = id) %>% 
+  filter(!is.na(deployment_id))
+
+weekly_subgraphs = query_hosted_subgraph(weekly_query_volume, qos_oracle)
+weekly_subgraphs = as.data.frame(weekly_subgraphs$queryDailyDataPoints) %>% 
+  unnest(subgraphDeployment) %>% 
+  mutate(query_count = as.numeric(query_count)) %>% 
+  rename(deployment_id = id) %>% 
+  filter(!is.na(deployment_id))
+
+# clean subgraph data 
+subgraphs_metadata = query_hosted_subgraph(subgraphs_metadata_query, network_subgraph)
+subgraphs_metadata = subgraphs_metadata$subgraphs 
+for (var in list("metadata", "currentVersion", "subgraphDeployment", "manifest")){
+  subgraphs_metadata = unnest_longer(subgraphs_metadata, 
+                                     var, indices_include = FALSE) %>% unnest(var)
+}
+
+subgraphs_metadata = subgraphs_metadata %>% 
+  rename(display_name = displayName,
+         deployment_id = id) %>% 
+  filter(!is.na(display_name) & display_name != "Swarm Ethereum") 
+
+braindexer_syncing = c("Qmd7wgnNTijSpV1JDM3yUE8Exy4EGG1jw3yyQKdTKvYiig",
+                       "QmRJwFemjzSz1iAvepk4FoLqTDLgFKmqegGyn7siz13WqG",
+                       "QmNWuoJm4vdpCqi8uZ3JusWoGbRvDn1HB2RhaLqDyq5Qzp",
+                       "QmRtThzzq3zyGLbzVfNEUycjfddfJodLDZZcNQGYr8tNkL",
+                       "QmVU5ySHH4rtrWsh7ZNJiA6WfnUbX6NSMgdpGenqbJXKMp",
+                       "QmTbEUPjL5QLEWDUSeJrxdz1P5zwBEDf8vm5SwnJwpZe6V",
+                       "QmR96s6vPXwFmn66vMZFgqEbc36VPptVE3Vow8Pvxy9Xp8",
+                       "QmaiMYSZrhz4zftVgpfHTnHr21RYGp7Haf7hhzG2irQ3bZ",
+                       "QmZ9kr5Cjepmdrj5EJnmfsneiJtok7rVpk81KUmZzFzkvp",
+                       "QmWEnV6povhA9Eq9Y315LsjJg7qwv169r1ZGw9o2uT24eZ",
+                       "QmRhcudFuQv6Usjt6UtQQkg67rEZcbfWwrj75zcN3xY2SY",
+                       "QmV1KtTWiHKMM58s7zVt3WPZLxCudJLD54gHEBomzrquSn",
+                       "QmURvb5xGPaMfzCFU3tENBDZa3UZQxr1cbvs8QpDXShgR6",
+                       "QmQmoKuFnyLsP8CmYpi9769nWMtGxqd8jceqHorJYe7scN",
+                       "QmdzXA8rqFu5Cha79JVyCgyb8RySZMKLAro7ehoLmg9fbZ",
+                       "QmXCb4AJu25yEZaqPbSVM1GapoMg8WRT3EaVctk6dDVbjk",
+                       "Qmd7wgnNTijSpV1JDM3yUE8Exy4EGG1jw3yyQKdTKvYiig",
+                       "QmYWvmm6rxvAk8E3cA6iXPhC6ETBLJFuEw8maYJ7YV9ATx",
+                       "QmVfU8u9DWbDn8Sv6FM3hJpgL4xRN3gwk45My4H3uhFsWU",
+                       "QmYXL6XeXyGC2DCnoQ45ApG68pi8irCZdRdtFx69FetRDd",
+                       "QmSi3zYXnjFS5NJPYTVjVNfsvStCv5X76AhQuwWaGH4ujF",
+                       "QmXZiV6S13ha6QXq4dmaM3TB4CHcDxBMvGexSNu9Kc28EH",
+                       "QmU6MT9kDXsuceYs36ShpDSpWcN9SAJf68uyLDHiR7SUBT",
+                       "QmXooQwKjSjMePubP3qGQP9JPNhRPr2bB2KWpN9pvrfutz",
+                       "QmQyBfxQW3aTxu8R7ZXoyGiyrmmQstjaJodFU6dSu2Xvs3",
+                       "QmcWQ368ayB4oRqdUfLKLygY2ukPmTCxdvMKnAdMZFvjFt",
+                       "QmQd79XT1deUhav1EjtfWcnbrSEhB45HJwJ91j9ugaGJkD",
+                       "QmQyBfxQW3aTxu8R7ZXoyGiyrmmQstjaJodFU6dSu2Xvs3",
+                       "QmcWQ368ayB4oRqdUfLKLygY2ukPmTCxdvMKnAdMZFvjFt",
+                       "QmTyKkEnrkPjXfyFKheuCfxYhD1Gq9DPPv81ebnJWXogrf",
+                       "QmcXTHcqM7BWd9UpNJf3m4f43bqJFpDMb5x7V4kyKSwWpE",
+                       "QmNfMJZCMB7fPJWdtPcuM6eDbrycqfNuek4jBATCsC5Zxu",
+                       "QmZevSjA57Uzriv2JK1U9xkfpJPqwfUDJ1W7ndCivpUwkM",
+                       "QmRkHe834SQfT3idRvyndvxEZBcYcPfKyeyD421gt6ijTN",
+                       "QmYWiqsjcvtR3r911LfgFopr1ULiLKYcZLnHcNfjNQdNEh")
+
+daily_subgraphs = daily_subgraphs %>% 
+  rename(success_rate = gateway_query_success_rate,
+         avg_latency = avg_gateway_latency_ms) %>% 
+  mutate(success_rate = round(as.numeric(success_rate),4),
+         avg_latency = round(as.numeric(avg_latency),0)) %>% 
+  group_by(deployment_id) %>% 
+  summarise(query_count = sum(query_count),
+            success_rate = round(mean(success_rate),4),
+            avg_latency = round(mean(avg_latency),0)) %>% 
+  left_join(subgraphs_metadata, by = "deployment_id") %>% 
+  select(display_name, everything(), -network) %>% 
+  mutate(rank = rank(-query_count, ties.method= "first")) %>%
+  select(rank, display_name, query_count, success_rate, avg_latency, deployment_id) %>% 
+  mutate(braindexer = if_else(deployment_id %in% braindexer_syncing, "Syncing", "Not Syncing")) 
+
+weekly_plots = weekly_subgraphs %>% 
+  rename(success_rate = gateway_query_success_rate,
+         avg_latency = avg_gateway_latency_ms) %>% 
+  mutate(success_rate = as.numeric(success_rate),
+         avg_latency = as.numeric(avg_latency)) %>% 
+  group_by(deployment_id) %>% 
+  summarise(query_count = sum(query_count),
+            success_rate = str_c(round(mean(success_rate),4)*100,"%"),
+            avg_latency = round(mean(avg_latency),0)) %>% 
+  left_join(subgraphs_metadata, by = "deployment_id") %>% 
+  select(display_name, everything(), -network)  %>% 
+  mutate(rank = rank(-query_count, ties.method= "first")) %>%
+  select(rank, display_name, query_count, success_rate, avg_latency, deployment_id) %>% 
+  mutate(braindexer = if_else(deployment_id %in% braindexer_syncing, "Syncing", "Not Syncing")) %>% 
+  arrange(desc(query_count))
+
+# indexer 
+qos_indexer_data = query_hosted_subgraph(top_indexers_query, qos_oracle)
+qos_indexer_data = qos_indexer_data$indexers
+
+monthly_totals = unnest_longer(qos_indexer_data,
+              indexerDailyDataPoints,
+              indices_include = FALSE) %>% 
+  unnest(indexerDailyDataPoints) %>% 
+  rename(queries_served = query_count) %>% 
+  mutate(queries_served = as.numeric(queries_served)) %>% 
+  rename(wallet_address = id,
+         query_fees_grt = total_query_fees) 
+
+subgraphs_served = monthly_totals %>% 
+  group_by(wallet_address) %>% 
+  summarise(subgraphs_served = n_distinct(subgraph_deployment_ipfs_hash))
+
+monthly_queries = monthly_totals %>% 
+  group_by(wallet_address) %>% 
+  summarise(queries_served = sum(queries_served),
+            query_fees_grt = sum(as.numeric(query_fees_grt)),
+            query_fees_grt = round(sum(query_fees_grt),2)) %>% 
+  arrange(-queries_served) %>% 
+  left_join(subgraphs_served, by = "wallet_address") %>% 
+  mutate(rank = rank(-queries_served, ties.method= "first")) %>%
+  select(rank, wallet_address, queries_served, subgraphs_served, query_fees_grt) 
+
+subgraph_totals = monthly_totals %>% 
+  rename(deployment_id = subgraph_deployment_ipfs_hash) %>% 
+  mutate(total_queries = as.numeric(queries_served),
+         total_fees_grt = round(as.numeric(query_fees_grt),2),
+         avg_query_fee = as.numeric(avg_query_fee)) %>% 
+  group_by(deployment_id) %>% 
+  summarize(indexers = n_distinct(wallet_address),
+            total_queries = sum(total_queries),
+            total_fees_grt = sum(total_fees_grt)) %>% 
+  arrange(desc(total_queries)) 
+
+braindexer_subgraphs = monthly_totals %>% 
+  rename(deployment_id = subgraph_deployment_ipfs_hash) %>% 
+  filter(wallet_address == "0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e") %>% 
+  mutate(queries_served = as.numeric(queries_served),
+         query_fees_grt = round(as.numeric(query_fees_grt),2),
+         avg_query_fee = as.numeric(avg_query_fee),
+         wallet_address = if_else(wallet_address == "0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e", 
+                                  str_c("🧠 Braindexer Arbitrum Indexer (0x920-76c1e)"), wallet_address)) %>% 
+  group_by(wallet_address, deployment_id) %>% 
+  summarize(queries_served = sum(queries_served),
+            query_fees_grt = sum(query_fees_grt),
+            avg_query_fee = mean(avg_query_fee)) %>% 
+  left_join(subgraphs_metadata, by = "deployment_id") %>% 
+  rename(subgraphs = display_name) %>% 
+  select(wallet_address, subgraphs, queries_served, query_fees_grt, deployment_id)
+
+```
+
+
+```{r, fig.height=6, fig.width=9.5, fig.align="center", include=FALSE, echo=FALSE, warning=FALSE, message=FALSE}
+#<details>
+#  <br>
+#  <summary><font size="3"> Top Network Subgraphs (Past Day) </font></summary>
+plot_subgraphs = daily_subgraphs %>% 
+  slice_max(query_count, n = 50) %>% 
+  mutate(display_name = fct_reorder(display_name, -query_count)) %>% 
+  filter(!is.na(display_name)) %>% 
+  ggplot(aes(x=display_name, y=query_count, color=braindexer,
+             text=paste('Query Rank:', rank, '<br>Subgraph:', display_name, 
+                        '<br>1D Queries:', format(query_count, nsmall=0, big.mark=","),
+                        '<br>Success rate:', success_rate, '<br>Avg latency:', avg_latency, "ms"))) +
+  geom_segment( aes(x=display_name, xend=display_name, y=0, yend=query_count)) +
+  geom_point(size=3, alpha=1, stroke=1) +
+  #geom_point(colour = "#FFFFFF", size=1, alpha=1) +
+  theme_minimal() +
+  theme(plot.title = element_text(size=14, face="bold", hjust=0.5),
+        plot.subtitle = element_text(size=11, hjust=0.5),
+        axis.title.x=element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1),
+        legend.position = "none") +
+  ggtitle("Top Graph Network Subgraphs by Query Volume (Past Day)") + 
+  ylab("Number of Queries") +
+  scale_color_manual(values=c("#00CED4", "#E9A1C9")) + 
+  scale_y_continuous(labels = comma)
+ggplotly(plot_subgraphs, tooltip = c("text")) 
+```
+
+```{r, include=FALSE, echo=FALSE}
+datatable(daily_subgraphs %>% 
+            mutate(query_count = format(query_count, nsmall=0, big.mark=","),
+                   success_rate = str_c(success_rate*100, "%"),
+                   avg_latency = str_c(avg_latency, " ms"),
+                   display_name = if_else(
+                     braindexer == "Syncing", str_c(display_name, " 🧠"), display_name)) %>%
+            select(-braindexer) %>% 
+            arrange(desc(query_count)), 
+          caption = "Top Graph Network Subgraphs by Query Volume (Past Day)", 
+          rownames = FALSE)
+#</details>
+#<br>
+```
+
+
+<details>
+  <br>
+  <summary><font size="3"> **Top Network Subgraphs (Past Week)** </font></summary>
+```{r, fig.height=6, fig.width=9.5, fig.align="center", echo=FALSE, warning=FALSE, message=FALSE}
+plot_subgraphs = weekly_plots %>% 
+  slice_max(query_count, n = 50) %>% 
+  mutate(display_name = fct_reorder(display_name, -query_count)) %>% 
+  filter(!is.na(display_name)) %>% 
+  ggplot(aes(x=display_name, y=query_count, color=braindexer,
+             text=paste('Query Rank:', rank, '<br>Subgraph:', display_name, 
+                        '<br>7D Queries:', format(query_count, nsmall=0, big.mark=","),
+                        '<br>Success rate:', success_rate, '<br>Avg latency:', avg_latency, "ms"))) +
+  geom_segment( aes(x=display_name, xend=display_name, y=0, yend=query_count)) +
+  geom_point(size=3, alpha=1, stroke=1) +
+  theme_minimal() +
+  theme(plot.title = element_text(size=14, face="bold", hjust=0.5),
+        plot.subtitle = element_text(size=11, hjust=0.5),
+        axis.title.x=element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1),
+        legend.position = "none") +
+  ggtitle("Top Graph Network Subgraphs by Query Volume (Past Week)") + 
+  ylab("Number of Queries") +
+  scale_color_manual(values=c("#00CED4", "#E9A1C9")) + 
+  scale_y_continuous(labels = comma)
+ggplotly(plot_subgraphs, tooltip = c("text")) 
+```
+
+```{r, echo=FALSE}
+datatable(weekly_plots %>% 
+             mutate(query_count = format(query_count, nsmall=0, big.mark=","),
+                    success_rate = success_rate,
+                    avg_latency = str_c(avg_latency, " ms"),
+                    display_name = if_else(
+                      braindexer == "Syncing", str_c("🧠 ", display_name), display_name)) %>% 
+            select(-braindexer) %>% 
+            arrange(desc(query_count)), 
+          caption = "Top Graph Network Subgraphs by Query Volume (Past Week)", 
+          rownames = FALSE)
+```
+</details>
+<br>
+
+<details>
+  <br>
+  <summary><font size="3"> **Queries Served by Indexers (Past 30D)** </font></summary>
+```{r, fig.height=5.5, fig.width=9.5, fig.align="center", echo=FALSE, warning=FALSE, message=FALSE}
+indexers_plot = monthly_queries %>% 
+  slice_max(queries_served, n = 50) %>% 
+  mutate(wallet_address = str_c(substr(wallet_address, 1, 4),"-",str_sub(wallet_address,-4,-1)),
+         wallet_address = if_else(
+           wallet_address %in% c("0x92-6c1e", "0x84-9948"), "🧠 Braindexer", wallet_address),
+         braindexer = if_else(wallet_address == "🧠 Braindexer", "Braindexer", "Other"),
+         wallet_address = fct_reorder(wallet_address, -queries_served)) %>% 
+  ggplot(aes(x=wallet_address, y=queries_served, color=braindexer, 
+             text=paste('Indexer:', wallet_address, '<br>Query Rank:', rank, 
+                        '<br>30D Queries:', format(queries_served, nsmall=0, big.mark=","),
+                        '<br>Subgraphs Served:', subgraphs_served))) + 
+  geom_segment(aes(x=wallet_address, xend=wallet_address, y=0, yend=queries_served)) +
+  geom_point(size=2, alpha=1, stroke=1) +
+  theme_minimal() +
+  theme(panel.background = element_rect(
+        fill = "white", colour = "white", size = 0.5, linetype = "solid"),
+        plot.title = element_text(size=14, face="bold", hjust=0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size=6, family = "Arial", colour="#000000"),
+        axis.text.x = element_text(size=6, angle = 45, vjust = 0.5, hjust=1),
+        axis.text.y = element_text(size=6, family = "Arial", colour="#000000"),
+        legend.position = "none") +
+   labs(title="Queries Served by Indexers (Past 30D)", 
+        y = "Queries Served by Indexer (Past 30D)") +
+   scale_color_manual(values=c("#E9A1C9", "#00CED4")) +
+   scale_y_continuous(labels = comma)
+ggplotly(indexers_plot, tooltip = c("text")) 
+```
+
+```{r, echo=FALSE}
+datatable(monthly_queries %>% 
+            mutate(queries_served = format(queries_served, nsmall=0, big.mark=","),
+                   wallet_address = if_else(
+                     wallet_address == "0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e",
+                     "🧠 Braindexer Arbitrum Indexer (0x920-76c1e)", wallet_address)) %>% 
+            select(wallet_address, queries_served, subgraphs_served, query_fees_grt) %>% 
+            arrange(desc(queries_served)), 
+          caption = "Top Indexers Serving Queries over Past 30 Days", 
+          rownames = FALSE,  options = list(pageLength = 15))
+```
+</details>
+<br>
+
+<details>
+  <br>
+  <summary><font size="3"> **Braindexer Total Queries (Past 30D)** </font></summary>
+```{r, fig.height=5.5, fig.width=9.5, fig.align="center", echo=FALSE, warning=FALSE, message=FALSE}
+
+braindexer_sync_count = as.character(count(braindexer_subgraphs)$n)
+braindexer_query_count = as.character(format(sum(braindexer_subgraphs$queries_served), nsmall=0, big.mark=","))
+braindexer_fees_count = as.character(round(sum(braindexer_subgraphs$query_fees_grt),2))
+prc_of_network_queries = round(sum(braindexer_subgraphs$queries_served)/sum(subgraph_totals$total_queries)*100,2)
+
+braindexer_table = braindexer_subgraphs %>% 
+  left_join(subgraph_totals, by = "deployment_id") %>% 
+  ungroup() %>% arrange(desc(query_fees_grt)) %>% 
+  mutate(prc_served = round((queries_served/total_queries)*100,2),
+         queries_served = format(queries_served, nsmall=0, big.mark=","),
+         queries_served = str_c(queries_served, " (", prc_served ,"%)"),
+         indexers = as.character(indexers),
+         query_fees_grt = as.character(query_fees_grt)) %>% 
+  select(wallet_address, subgraphs, queries_served, query_fees_grt, indexers, deployment_id) 
+
+revSubstr <- function(x, start, stop) {
+  x <- strsplit(x, "")
+  sapply(x, 
+         function(x) paste(rev(rev(x)[start:stop]), collapse = ""), 
+         USE.NAMES = FALSE)
+}
+
+braindexer_queries = braindexer_table %>% 
+  mutate(queries_served_num = sub("\\(.*", "", queries_served),
+         queries_served_num = str_replace_all(queries_served_num, ",", ""),
+         queries_served_num = as.numeric(queries_served_num),
+         subgraphs = if_else(is.na(subgraphs), 
+                             str_c(substr(deployment_id, start = 1, stop = 4),"-",
+                                   revSubstr(deployment_id, start = 1, stop = 4)), subgraphs),
+         subgraphs = fct_reorder(subgraphs, -queries_served_num)) %>% 
+  select(subgraphs, queries_served, queries_served_num, deployment_id) %>% 
+  ggplot(aes(x=subgraphs, y=queries_served_num, 
+             text=paste('Subgraph:', subgraphs, '<br>Deployment ID:', deployment_id, 
+                        '<br>Queries Served:', queries_served))) + 
+  geom_segment(aes(x=subgraphs, xend=subgraphs, y=0, yend=queries_served_num)) +
+  geom_point(size=2, alpha=1, stroke=1, color="#E9A1C9") +
+  theme_minimal() +
+  theme(panel.background = element_rect(
+        fill = "white", colour = "white", size = 0.5, linetype = "solid"),
+        plot.title = element_text(size=14, face="bold", hjust=0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size=8, family = "Arial", colour="#000000"),
+        axis.text.x = element_text(size=8, angle = 45, vjust = 0.5, hjust=1),
+        axis.text.y = element_text(size=8, family = "Arial", colour="#000000"),
+        legend.position = "none") +
+   labs(title="Queries Served by Braindexer (Past 30D)", 
+        y = "Queries Served by Braindexer (Past 30D)") +
+   #scale_color_manual(values=c("#E9A1C9", "#00CED4")) +
+   scale_y_continuous(labels = comma)
+ggplotly(braindexer_queries, tooltip = c("text")) 
+```
+
+```{r, echo=FALSE}
+datatable(braindexer_table %>%
+            add_row(wallet_address = "📊 Braindexer Total Queries (Past 30D)", 
+                    subgraphs = str_c(braindexer_sync_count, " subgraphs"),
+                    queries_served = str_c(braindexer_query_count, " (",prc_of_network_queries, "%)"),
+                    query_fees_grt = str_c(braindexer_fees_count, " GRT")), 
+          caption = "Queries Served by Braindexer (Past 30D)", 
+          rownames = FALSE)
+```
+</details>
+<br>
+
+<details>
+    <br>
+    <summary><font size="3"> **Allocation Code & Indexing Links** </font></summary>
+```{shell}
+# connect to ethereum/arbitrum
+ssh graph@5.9.85.100 
+docker run --entrypoint /bin/bash -it ghcr.io/graphprotocol/indexer-cli:v0.20.22
+graph indexer connect http://5.9.85.100:30800
+graph indexer connect http://5.9.85.100:30801
+
+# statuses 
+graph indexer status --network arbitrum-one
+graph indexer actions get --status queued --network arbitrum-one
+
+# actions
+graph indexer actions queue allocate deployment_id 100
+graph indexer actions queue reallocate deployment_id allocation_id 100
+graph indexer actions queue unallocate deployment_id allocation_id
+graph indexer rules prepare deployment_id 
+graph indexer actions approve id --network arbitrum-one
+graph indexer actions execute approved
+
+# grafting 
+curl -XPOST https://api.thegraph.com/ipfs/api/v0/cat\?arg\=deployment_id -s | grep graft -A 1
+
+# force unallocate
+graph indexer actions queue unallocate deployment_id allocation_id 0x0000000000000000000000000000000000000000000000000000000000000000 --force --network arbitrum-one
+```
+
+[Braindexer Explorer](https://thegraph.com/explorer/profile/0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e?view=Indexing&chain=arbitrum-one) | [Braindexer Graphscan](https://arbitrum.graphscan.io/profile?id=0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e#indexer-allocations) | [OK Graph](https://okgraph.xyz/) | [The Graph Indexer Docs](https://thegraph.com/docs/en/network/indexing/) | [The Graph Error Docs](https://github.com/graphprotocol/indexer/blob/main/docs/errors.md#ie064)
+
+</details>
+
+<br>
+<br>
+<br>
+<br>
+<br>

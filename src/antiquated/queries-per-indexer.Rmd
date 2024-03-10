@@ -1,0 +1,122 @@
+---
+output: html_document
+---
+
+Top Indexers by Queries Served
+
+```{r setup, include=FALSE}
+rm(list = ls())
+
+library("tidyverse")
+library("lubridate")
+library("magick")
+briandexer_image <- image_read("https://api.thegraph.com/ipfs/api/v0/cat?arg=QmYmiEYF1rkNthNLdpi831SW97o2LGSeA7FfKGbhLgUTNQ")
+#briandexer_image <- image_read("https://app.ardrive.io/#/file/d1ac0665-07d9-4ed8-ac21-92d05d513652/view")
+
+#https://app.ardrive.io/#/file/d1ac0665-07d9-4ed8-ac21-92d05d513652/view
+
+
+query_subgraph = function(api_or_query_key, endpoint, graphql_query){
+  
+  library("ghql")
+  library("jsonlite")
+  
+  graphql_conn <- ghql::GraphqlClient$new(
+    url = endpoint, 
+    headers = list(Authorization = paste0("Bearer ", api_or_query_key)))
+  
+  qry <- Query$new()
+  qry$query('query_table', graphql_query)
+  query_table <- graphql_conn$exec(qry$queries$query_table)
+  query_table <- jsonlite::fromJSON(query_table)
+  query_table <- query_table$data
+  query_table
+}
+
+```
+
+```{r}
+unix_today = as.numeric(as.POSIXct(today(), format="%Y-%m-%d"))
+date_30d_before = (as.Date(today(), format="%d/%m/%Y") - 30)
+unix_30d_before = as.numeric(as.POSIXct(date_30d_before, format="%Y-%m-%d"))
+
+my_query_key = "pWRuYW1lTnRlc3QtcXVlcnkta2V5ZHVzZXJUTesSNU6pKVj6EfyMEkqfErYbirRmc2lnbmVyVE3rEjVOqSlY-hH8jBJKnxK2G4q0aGNoYWluX2lkGaSxaGNvbnRyYWN0VEgvWNNRPjhgNmcEBLNcs_LfZ6dQxQnqFbv8C1tHjhKNtXPDWEvMUYUrfuDUJTFT9JxA7ik7EzT15sBfazw6dbYo9kM6PS3AE86idfR8G7nKfnhMRhs"
+qos_oracle = "https://api.thegraph.com/subgraphs/name/juanmardefago/gateway-qos-oracle"
+top_indexers_query = str_c('{
+  indexers(
+      first: 1000, 
+      orderBy: id, 
+      orderDirection: asc) {
+    id
+    indexerDailyDataPoints(
+      orderBy: query_count,
+      orderDirection: desc,
+      where: {dayStart_gt: "',unix_30d_before,'"}
+    ) {
+      subgraph_deployment_ipfs_hash
+      query_count
+      total_query_fees
+      avg_query_fee
+    }
+  }
+}')
+
+qos_indexer_data = query_subgraph(my_query_key, qos_oracle, top_indexers_query)
+qos_indexer_data = qos_indexer_data$indexers
+
+monthly_totals = unnest_longer(qos_indexer_data,
+              indexerDailyDataPoints,
+              indices_include = FALSE) %>% 
+  unnest(indexerDailyDataPoints) %>% 
+  mutate(query_count = as.numeric(query_count)) %>% 
+  group_by(id) %>% 
+  summarise(query_count = sum(query_count)) %>% 
+  arrange(-query_count)
+monthly_totals
+```
+
+```{r, warning=FALSE, message=FALSE,  fig.align="center", fig.height=3, fig.width=6, echo=FALSE}
+braindexer_checks = monthly_totals %>% 
+  filter(query_count > 1000) %>% 
+  mutate(ab_add = substr(id, 1, 6)) %>% 
+  mutate(organization = if_else(
+    id == tolower("0x920FDEB00EE04dd72f62d8A8f80F13c82ef76C1e"), "Braindexer", "other"),
+         organization = if_else(
+           id == tolower("0x844e344DFdBc538cb6E9d120717b025a77CA9948"), "Braindexer", organization))
+
+braindexer_charts = braindexer_checks %>% 
+  ggplot(aes(x=reorder(ab_add, -query_count), y=query_count, fill=organization)) + 
+  geom_bar(stat = "identity", width=0.5) +
+  theme(panel.background = element_rect(fill = "white", colour = "white", 
+                                          size = 0.5, linetype = "solid"),
+          plot.background = element_rect(fill = "white"),
+          plot.title = element_text(size=10, colour="#000000", 
+                                    family = "Arial", hjust = 0.5),
+          axis.title.x = element_blank(),
+          axis.title.y = element_text(size=6, family = "Arial", colour="#000000"),
+          axis.text.x = element_text(size=4, angle = 90, vjust = 0.5, hjust=1),
+          axis.text.y = element_text(size=6, family = "Arial", colour="#000000"),
+          legend.position = "bottom", 
+          legend.title = element_blank(),
+          legend.text=element_text(color="#000000", family = "Arial", size=6),
+          legend.background = element_rect(fill = "white"),
+          legend.box.background = element_rect(colour = "white"),
+          legend.key.height = unit(.1, "cm"),
+          legend.key = element_rect(fill = "white")) +
+    labs(title="Queries Served by Indexers (Past 30D)", y = "Queries Served by Indexer (Past 30D)") +
+    scale_y_continuous(breaks=c(0, 10000000, 20000000, 30000000, 40000000, 50000000), 
+                       labels=c("0", "10M",  "20M", "30M", "40M", "50M")) +
+    scale_fill_manual(labels=c("Braindexer", "Other"), values=c('#E9A1C9', '#00CED4')) 
+braindexer_charts
+```
+
+
+
+
+
+
+
+
+
+
+

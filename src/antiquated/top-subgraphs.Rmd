@@ -1,0 +1,291 @@
+---
+output: html_document
+---
+
+```{css, echo=FALSE}
+/* this chunk of code centers all of the headings */
+h1, h2, h3, h4, h5 {
+  text-align: center;
+}
+```
+
+<br>
+
+```{r pressure, echo=FALSE, fig.align="center", out.width = '150%'}
+knitr::include_graphics("query-catcher-header.png")
+```
+
+<br>
+<br>
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+#rm(list = ls())
+
+library("tidyverse")
+library("lubridate")
+library("plotly")
+library("DT")
+library("scales")
+
+query_subgraph = function(api_or_query_key, endpoint, graphql_query){
+  
+  library("ghql")
+  library("jsonlite")
+  
+  graphql_conn <- ghql::GraphqlClient$new(
+    url = endpoint, 
+    headers = list(Authorization = paste0("Bearer ", api_or_query_key)))
+  
+  qry <- Query$new()
+  qry$query('query_table', graphql_query)
+  query_table <- graphql_conn$exec(qry$queries$query_table)
+  query_table <- jsonlite::fromJSON(query_table)
+  query_table <- query_table$data
+  query_table
+}
+
+unix_today = as.numeric(as.POSIXct(today(), format="%Y-%m-%d"))
+date_before_1 = (as.Date(today(), format="%d/%m/%Y") - 1)
+unix_before_1 = as.numeric(as.POSIXct(date_before_1, format="%Y-%m-%d"))
+date_before_7 = (as.Date(today(), format="%d/%m/%Y") - 7)
+unix_before_7 = as.numeric(as.POSIXct(date_before_7, format="%Y-%m-%d"))
+
+my_query_key = "hosted"
+qos_oracle = "https://api.thegraph.com/subgraphs/name/juanmardefago/gateway-qos-oracle"
+network_subgraph = "https://api.thegraph.com/subgraphs/name/graphprotocol/graph-network-arbitrum"
+
+daily_query_volume = str_c('{
+  queryDailyDataPoints(
+    first: 1000
+    where: {
+      gateway_id: "mainnet-arbitrum", 
+      chain_id: "mainnet", 
+      dayStart_gt: "',unix_before_1,'"} 
+    orderBy: query_count
+    orderDirection: desc
+  ) {
+    subgraphDeployment {
+      id
+    }
+    query_count
+    gateway_query_success_rate 
+    avg_gateway_latency_ms
+    total_query_fees
+    gateway_id
+    chain_id
+    dayStart
+  }
+}')
+
+weekly_query_volume = str_c('{
+  queryDailyDataPoints(
+    first: 1000
+    where: {
+      gateway_id: "mainnet-arbitrum", 
+      chain_id: "mainnet", 
+      dayStart_gt: "',unix_before_7,'"} 
+    orderBy: query_count
+    orderDirection: desc
+  ) {
+    subgraphDeployment {
+      id
+    }
+    query_count
+    gateway_query_success_rate 
+    avg_gateway_latency_ms
+    total_query_fees
+    gateway_id
+    chain_id
+    dayStart
+  }
+}')
+
+subgraphs_metadata_query = str_c('{
+  subgraphs(first: 1000, where: {active: true}) {
+    metadata {
+      displayName
+    }
+    currentVersion {
+      subgraphDeployment {
+        manifest {
+          id
+          network
+        }
+      }
+    }
+  }
+}')
+
+
+daily_subgraphs = query_subgraph(my_query_key, qos_oracle, daily_query_volume)
+daily_subgraphs = as.data.frame(daily_subgraphs$queryDailyDataPoints) %>% 
+  unnest(subgraphDeployment) %>% 
+  mutate(query_count = as.numeric(query_count)) %>% 
+  rename(deployment_id = id) %>% 
+  filter(!is.na(deployment_id))
+
+weekly_subgraphs = query_subgraph(my_query_key, qos_oracle, weekly_query_volume)
+weekly_subgraphs = as.data.frame(weekly_subgraphs$queryDailyDataPoints) %>% 
+  unnest(subgraphDeployment) %>% 
+  mutate(query_count = as.numeric(query_count)) %>% 
+  rename(deployment_id = id) %>% 
+  filter(!is.na(deployment_id))
+
+# clean subgraph data 
+subgraphs_metadata = query_subgraph(my_query_key, network_subgraph, subgraphs_metadata_query)
+subgraphs_metadata = subgraphs_metadata$subgraphs 
+for (var in list("metadata", "currentVersion", "subgraphDeployment", "manifest")){
+  subgraphs_metadata = unnest_longer(subgraphs_metadata, 
+                                     var, indices_include = FALSE) %>% unnest(var)
+}
+
+subgraphs_metadata = subgraphs_metadata %>% 
+  rename(display_name = displayName,
+         deployment_id = id) %>% 
+  filter(!is.na(display_name) & display_name != "Swarm Ethereum") 
+
+braindexer_syncing = c("Qmd7wgnNTijSpV1JDM3yUE8Exy4EGG1jw3yyQKdTKvYiig",
+                       "QmRJwFemjzSz1iAvepk4FoLqTDLgFKmqegGyn7siz13WqG",
+                       "QmNWuoJm4vdpCqi8uZ3JusWoGbRvDn1HB2RhaLqDyq5Qzp",
+                       "QmRtThzzq3zyGLbzVfNEUycjfddfJodLDZZcNQGYr8tNkL",
+                       "QmVU5ySHH4rtrWsh7ZNJiA6WfnUbX6NSMgdpGenqbJXKMp",
+                       "QmTbEUPjL5QLEWDUSeJrxdz1P5zwBEDf8vm5SwnJwpZe6V",
+                       "QmR96s6vPXwFmn66vMZFgqEbc36VPptVE3Vow8Pvxy9Xp8",
+                       "QmaiMYSZrhz4zftVgpfHTnHr21RYGp7Haf7hhzG2irQ3bZ",
+                       "QmZ9kr5Cjepmdrj5EJnmfsneiJtok7rVpk81KUmZzFzkvp",
+                       "QmWEnV6povhA9Eq9Y315LsjJg7qwv169r1ZGw9o2uT24eZ",
+                       "QmRhcudFuQv6Usjt6UtQQkg67rEZcbfWwrj75zcN3xY2SY",
+                       "QmV1KtTWiHKMM58s7zVt3WPZLxCudJLD54gHEBomzrquSn",
+                       "QmURvb5xGPaMfzCFU3tENBDZa3UZQxr1cbvs8QpDXShgR6",
+                       "QmQmoKuFnyLsP8CmYpi9769nWMtGxqd8jceqHorJYe7scN",
+                       "QmdzXA8rqFu5Cha79JVyCgyb8RySZMKLAro7ehoLmg9fbZ",
+                       "QmXCb4AJu25yEZaqPbSVM1GapoMg8WRT3EaVctk6dDVbjk",
+                       "Qmd7wgnNTijSpV1JDM3yUE8Exy4EGG1jw3yyQKdTKvYiig",
+                       "QmYWvmm6rxvAk8E3cA6iXPhC6ETBLJFuEw8maYJ7YV9ATx",
+                       "QmVfU8u9DWbDn8Sv6FM3hJpgL4xRN3gwk45My4H3uhFsWU",
+                       "QmYXL6XeXyGC2DCnoQ45ApG68pi8irCZdRdtFx69FetRDd",
+                       "QmSi3zYXnjFS5NJPYTVjVNfsvStCv5X76AhQuwWaGH4ujF",
+                       "QmXZiV6S13ha6QXq4dmaM3TB4CHcDxBMvGexSNu9Kc28EH",
+                       "QmU6MT9kDXsuceYs36ShpDSpWcN9SAJf68uyLDHiR7SUBT",
+                       "QmXooQwKjSjMePubP3qGQP9JPNhRPr2bB2KWpN9pvrfutz",
+                       "QmQyBfxQW3aTxu8R7ZXoyGiyrmmQstjaJodFU6dSu2Xvs3",
+                       "QmcWQ368ayB4oRqdUfLKLygY2ukPmTCxdvMKnAdMZFvjFt",
+                       "QmQd79XT1deUhav1EjtfWcnbrSEhB45HJwJ91j9ugaGJkD",
+                       "QmQyBfxQW3aTxu8R7ZXoyGiyrmmQstjaJodFU6dSu2Xvs3",
+                       "QmcWQ368ayB4oRqdUfLKLygY2ukPmTCxdvMKnAdMZFvjFt",
+                       "QmTyKkEnrkPjXfyFKheuCfxYhD1Gq9DPPv81ebnJWXogrf",
+                       "QmcXTHcqM7BWd9UpNJf3m4f43bqJFpDMb5x7V4kyKSwWpE",
+                       "QmNfMJZCMB7fPJWdtPcuM6eDbrycqfNuek4jBATCsC5Zxu",
+                       "QmZevSjA57Uzriv2JK1U9xkfpJPqwfUDJ1W7ndCivpUwkM")
+
+daily_subgraphs = daily_subgraphs %>% 
+  rename(success_rate = gateway_query_success_rate,
+         avg_latency = avg_gateway_latency_ms) %>% 
+  mutate(success_rate = round(as.numeric(success_rate),4),
+         avg_latency = round(as.numeric(avg_latency),0)) %>% 
+  group_by(deployment_id) %>% 
+  summarise(query_count = sum(query_count),
+            success_rate = round(mean(success_rate),4),
+            avg_latency = round(mean(avg_latency),0)) %>% 
+  left_join(subgraphs_metadata, by = "deployment_id") %>% 
+  select(display_name, everything(), -network) %>% 
+  mutate(rank = rank(-query_count, ties.method= "first")) %>%
+  select(rank, display_name, query_count, success_rate, avg_latency, deployment_id) %>% 
+  mutate(braindexer = if_else(deployment_id %in% braindexer_syncing, "Syncing", "Not Syncing")) 
+
+weekly_plots = weekly_subgraphs %>% 
+  rename(success_rate = gateway_query_success_rate,
+         avg_latency = avg_gateway_latency_ms) %>% 
+  mutate(success_rate = as.numeric(success_rate),
+         avg_latency = as.numeric(avg_latency)) %>% 
+  group_by(deployment_id) %>% 
+  summarise(query_count = sum(query_count),
+            success_rate = str_c(round(mean(success_rate),4)*100,"%"),
+            avg_latency = round(mean(avg_latency),0)) %>% 
+  left_join(subgraphs_metadata, by = "deployment_id") %>% 
+  select(display_name, everything(), -network)  %>% 
+  mutate(rank = rank(-query_count, ties.method= "first")) %>%
+  select(rank, display_name, query_count, success_rate, avg_latency, deployment_id) %>% 
+  mutate(braindexer = if_else(deployment_id %in% braindexer_syncing, "Syncing", "Not Syncing")) %>% 
+  arrange(desc(query_count))
+```
+
+```{r, fig.height=6, fig.width=9.5, fig.align="center", echo=FALSE, warning=FALSE, message=FALSE}
+plot_subgraphs = daily_subgraphs %>% 
+  slice_max(query_count, n = 50) %>% 
+  mutate(display_name = fct_reorder(display_name, -query_count)) %>% 
+  filter(!is.na(display_name)) %>% 
+  ggplot(aes(x=display_name, y=query_count, color=braindexer,
+             text=paste('Query Rank:', rank, '<br>Subgraph:', display_name, 
+                        '<br>1D Queries:', format(query_count, nsmall=0, big.mark=","),
+                        '<br>Success rate:', success_rate, '<br>Avg latency:', avg_latency, "ms"))) +
+  geom_segment( aes(x=display_name, xend=display_name, y=0, yend=query_count)) +
+  geom_point(size=3, alpha=1, stroke=1) +
+  #geom_point(colour = "#FFFFFF", size=1, alpha=1) +
+  theme_minimal() +
+  theme(plot.title = element_text(size=14, face="bold", hjust=0.5),
+        plot.subtitle = element_text(size=11, hjust=0.5),
+        axis.title.x=element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1),
+        legend.position = "none") +
+  ggtitle("Top Graph Network Subgraphs by Query Volume (Past Day)") + 
+  ylab("Number of Queries") +
+  scale_color_manual(values=c("#00CED4", "#E9A1C9")) + 
+  scale_y_continuous(labels = comma)
+ggplotly(plot_subgraphs, tooltip = c("text")) 
+```
+
+```{r, echo=FALSE}
+datatable(daily_subgraphs %>% 
+            mutate(query_count = format(query_count, nsmall=0, big.mark=","),
+                   success_rate = str_c(success_rate*100, "%"),
+                   avg_latency = str_c(avg_latency, " ms"),
+                   display_name = if_else(
+                     braindexer == "Syncing", str_c(display_name, " 🧠"), display_name)) %>%
+            select(-braindexer) %>% 
+            arrange(desc(query_count)), 
+          caption = "Top Graph Network Subgraphs by Query Volume (Past Day)", 
+          rownames = FALSE)
+```
+
+<br>
+<br>
+<br>
+
+```{r, fig.height=6, fig.width=9.5, fig.align="center", echo=FALSE, warning=FALSE, message=FALSE}
+plot_subgraphs = weekly_plots %>% 
+  slice_max(query_count, n = 50) %>% 
+  mutate(display_name = fct_reorder(display_name, -query_count)) %>% 
+  filter(!is.na(display_name)) %>% 
+  ggplot(aes(x=display_name, y=query_count, color=braindexer,
+             text=paste('Query Rank:', rank, '<br>Subgraph:', display_name, 
+                        '<br>7D Queries:', format(query_count, nsmall=0, big.mark=","),
+                        '<br>Success rate:', success_rate, '<br>Avg latency:', avg_latency, "ms"))) +
+  geom_segment( aes(x=display_name, xend=display_name, y=0, yend=query_count)) +
+  geom_point(size=3, alpha=1, stroke=1) +
+  theme_minimal() +
+  theme(plot.title = element_text(size=14, face="bold", hjust=0.5),
+        plot.subtitle = element_text(size=11, hjust=0.5),
+        axis.title.x=element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1),
+        legend.position = "none") +
+  ggtitle("Top Graph Network Subgraphs by Query Volume (Past Week)") + 
+  ylab("Number of Queries") +
+  scale_color_manual(values=c("#00CED4", "#E9A1C9")) + 
+  scale_y_continuous(labels = comma)
+ggplotly(plot_subgraphs, tooltip = c("text")) 
+```
+
+```{r, echo=FALSE}
+datatable(weekly_plots %>% 
+             mutate(query_count = format(query_count, nsmall=0, big.mark=","),
+                    success_rate = success_rate,
+                    avg_latency = str_c(avg_latency, " ms"),
+                    display_name = if_else(
+                      braindexer == "Syncing", str_c(display_name, " 🧠"), display_name)) %>% 
+            select(-braindexer) %>% 
+            arrange(desc(query_count)), 
+          caption = "Top Graph Network Subgraphs by Query Volume (Past Week)", 
+          rownames = FALSE)
+```
+

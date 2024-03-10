@@ -1,0 +1,113 @@
+---
+output: html_document
+---
+
+```{css, echo=FALSE}
+/* this chunk of code centers all of the headings */
+h1, h2, h3, h4 {
+  text-align: center;
+}
+```
+
+<br>
+
+```{r pressure, echo=FALSE, fig.align="center", out.width = '150%'}
+#setwd("~/Documents/git/braindexer/design-assets")
+knitr::include_graphics("query-catcher-header.png")
+```
+
+<br>
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+rm(list = ls())
+
+library("tidyverse")
+library("janitor")
+library("notionR")
+library("lubridate")
+library("DT")
+library("onchainR")
+source("~/Documents/git/secrets.R")
+source("~/Documents/git/braindexer/thegraphR/thegraphR.R")
+`%notin%` <- Negate(`%in%`)
+
+notion_allocations = getNotionDatabase(
+  braindexer_secret, "71479f56f5a14e308aecd90229e59f97") %>% 
+  janitor::clean_names() %>% 
+  rename(notion_id = id,
+         subgraph_name = properties_subgraph_title_plain_text,
+         deployment_id = properties_deployment_id_rich_text_plain_text,
+         entities = properties_entities_number,
+         grafting = properties_grafting_rich_text_annotations_code,
+         status = properties_status_select_name) %>% 
+  filter(status %notin% c("Mainnet", "Deleted", "Error")) %>% 
+  select(status, subgraph_name, deployment_id, entities, grafting, notion_id)
+
+unix_before_1 = as.numeric(as.POSIXct((as.Date(today(), format="%d/%m/%Y") - 1), format="%Y-%m-%d"))
+deployment_data = queryVolumeByDeployment(unix_before_1, "mainnet", "mainnet-arbitrum") %>% 
+  select(deployment_id, query_count, total_query_fees) %>%
+  left_join(getDeploymentStats(braindexer_api_key), by = "deployment_id") %>% 
+  mutate(signalled_tokens = replace_na(signalled_tokens, 0),
+         staked_tokens = replace_na(staked_tokens, 0),
+         proportion = replace_na(proportion, 0),
+         query_fees_grt = round(as.numeric(total_query_fees), 4)) %>% 
+  select(deployment_id, proportion, signalled_tokens, staked_tokens, query_count, query_fees_grt) %>% 
+  arrange(desc(proportion))
+
+braindexer_allocations = allocationsByIndexer("0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e") %>% 
+  select(deployment_id, allocated_tokens, subgraph_id, allocation_id) %>% 
+  mutate(allocated_tokens = round(allocated_tokens, 2))
+
+braindexer_statuses = maxBlocksBehind("0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e", unix_before_1) %>% 
+  select(subgraph_deployment_ipfs_hash, avg_indexer_blocks_behind) %>% 
+  rename(deployment_id = subgraph_deployment_ipfs_hash,
+         blocks_behind = avg_indexer_blocks_behind) 
+
+braindexer_allocations = notion_allocations %>% 
+  left_join(braindexer_allocations, by = "deployment_id") %>% 
+  left_join(deployment_data, by = "deployment_id") %>% 
+  left_join(braindexer_statuses, by = "deployment_id") %>% 
+  mutate(status = if_else(blocks_behind < 2, "🟢", status),
+         status = if_else(blocks_behind < 5 & blocks_behind > 2, "🟡", status),
+         status = if_else(blocks_behind > 5, "🔴", status),
+         status = if_else(status %notin% c("🟢","🟡","🔴"), "🟠", status)) %>% 
+  select(status, subgraph_name, query_count, query_fees_grt, proportion, allocated_tokens,  
+         signalled_tokens, staked_tokens, blocks_behind, entities, grafting, 
+         deployment_id, subgraph_id, allocation_id, notion_id) %>% 
+  arrange(desc(proportion))
+
+braindexer_status = maxBlocksBehind("0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e", unix_before_1) %>% 
+  select(subgraph_deployment_ipfs_hash, avg_indexer_blocks_behind) %>% 
+  rename(deployment_id = subgraph_deployment_ipfs_hash,
+         blocks_behind = avg_indexer_blocks_behind) 
+
+braindexer_summary = braindexer_allocations %>% 
+  select(status, subgraph_name, proportion, allocated_tokens, 
+         query_count, query_fees_grt, deployment_id) %>% 
+  arrange(desc(allocated_tokens), desc(query_count))
+
+notion_update = braindexer_allocations %>% 
+  mutate(todays_date = today(),
+         query_count = replace_na(query_count, 0),
+         query_fees_grt = replace_na(query_fees_grt, 0),
+         proportion = replace_na(proportion, 0),)
+
+notion_update
+
+for (i in 1:nrow(notion_update)) { 
+  updateDate(braindexer_secret, notion_update$notion_id[i], 
+              "Updated",  notion_update$todays_date[i])
+  updateNumber(braindexer_secret, notion_update$notion_id[i], 
+              "🌏Queries",  notion_update$query_count[i])
+  updateNumber(braindexer_secret, notion_update$notion_id[i], 
+              "Allocated",  notion_update$allocated_tokens[i])
+  updateSelect(braindexer_secret, notion_update$notion_id[i], 
+              "Status",  notion_update$status[i])
+  updateText(braindexer_secret, notion_update$notion_id[i], 
+             "Subgraph ID",  notion_update$subgraph_id[i])
+  updateText(braindexer_secret, notion_update$notion_id[i], 
+             "Allocation ID",  notion_update$allocation_id[i])
+}
+```
+
+
