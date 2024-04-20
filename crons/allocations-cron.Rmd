@@ -113,15 +113,28 @@ combined_queries_by_period
 ```{r, fig.height=5.5, fig.width=9.5, fig.align="center", echo=FALSE, warning=FALSE, message=FALSE}
 indexers_plot = combined_queries_by_period %>% 
   left_join(indexers, by = "wallet_address") %>% 
-  filter(rank_30d < 25) %>% 
-  #slice_max(order_by = rank_30d, n = 40) %>% 
-  mutate(wallet_address = str_c(substr(wallet_address, 1, 4),"-",str_sub(wallet_address,-4,-1)),
-         indexer_name = str_replace_all(indexer_name, "Braindexer", "🧠 Braindexer"),
+  mutate(indexer_name = replace_na(indexer_name, "Unknown Indexer")) %>% 
+  group_by(indexer_name, period) %>% 
+  summarise(queries_served = sum(queries_served),
+            subgraphs_served = sum(subgraphs_served)) 
+
+indexers_rank30d = indexers_plot %>% 
+  filter(period == "30D") %>% 
+  arrange(desc(queries_served)) 
+
+indexers_rank30d$rank_30d <-  rank(-indexers_rank30d$queries_served)
+
+indexers_plot = indexers_plot %>%
+  left_join(indexers_rank30d %>% select(rank_30d, indexer_name), by = "indexer_name") %>% 
+  filter(rank_30d < 26) %>% 
+  arrange(rank_30d) %>% 
+  #left_join(indexers %>% group_by(), by = "indexer_name") %>% 
+  mutate(indexer_name = str_replace_all(indexer_name, "Braindexer", "🧠 Braindexer"),
          indexer_name = fct_reorder(indexer_name, rank_30d)) %>% 
-  ggplot(aes(fill=period, x=indexer_name, y=queries_served, group = period,
+  ggplot(aes(fill=period, x=fct_reorder(indexer_name, rank_30d), y=queries_served, group = period,
              text=paste0('Indexer: ', indexer_name, 
-                         '<br>Wallet: ', wallet_address, 
-                         '<br>',period,' Rank: ', rank, 
+                         #'<br>Wallet: ', wallet_address, 
+                         '<br>',period,' Rank: ', rank_30d, 
                          '<br>',period,' Queries: ', format(queries_served, nsmall=0, big.mark=","),
                          '<br>',period,' Subgraphs Served: ', subgraphs_served))) + 
   geom_bar(stat="identity", width = 0.5, position = position_dodge(width=0.7)) +
@@ -549,10 +562,11 @@ new_allocations = braindexer_allocations %>%
   mutate(total_signal = getGraphArbitrumStats("signalled_tokens"),
          total_stake = getGraphArbitrumStats("staked_tokens") + getGraphArbitrumStats("delegated_tokens"),
          nobrain_stake = (current_stake-current_brain),
-         nobrain_prop = round(((current_signal)/(total_signal))/((nobrain_stake)/(total_stake)),4),
+         nobrain_prop = round(((current_signal)/(total_signal))/
+                                ((nobrain_stake)/(total_stake)),4),
          new_prop = new_prop,
          new_stake = (current_signal*total_stake)/(total_signal*new_prop),
-         new_brain = if_else(current_stake < new_stake, round((new_stake), 0), 10),
+         new_brain = if_else(current_stake < new_stake, round((new_stake), 0), 5000),
          new_brain = if_else(is.na(new_brain), current_brain, new_brain), 
          action = if_else(current_stake < new_stake, "reallocate", "lower"),
          action = if_else(is.na(nobrain_prop), "research", action),
@@ -643,20 +657,6 @@ graph indexer status --network mainnet
 graph indexer actions get --status queued --network mainnet
 ```
 
-**Research Allocations**
-
-**Note:** These need to check these since they were missing allocation data above. 
-
-```{r, echo=FALSE, comment=NA}
-options(scipen = 999)
-#cat(paste0("# need to check these since they were missing allocation data"),sep="\n")
-for (i in 1:nrow(reallocations_research)) {
-  allocate = "graph indexer actions queue reallocate "
-  network = " --network arbitrum-one"
-  cat(paste0(allocate, reallocations_research$deployment_id[i]," ",reallocations_research$new_brain[i],network," # ",reallocations_research$subgraph_name[i]),sep="\n")
-}
-```
-
 **Minimal Allocations**
 
 **Note:** You can double check but these allocations likely fall below our optimization threshold of `new_prop`.
@@ -668,6 +668,20 @@ for (i in 1:nrow(reallocations_lower)) {
   allocate = "graph indexer actions queue reallocate "
   network = " --network arbitrum-one"
   cat(paste0(allocate, reallocations_lower$deployment_id[i]," ",reallocations_lower$new_brain[i],network," # ",reallocations_lower$subgraph_name[i]),sep="\n")
+}
+```
+
+**Research Allocations**
+
+**Note:** These need to check these since they were missing allocation data above. 
+
+```{r, echo=FALSE, comment=NA}
+options(scipen = 999)
+#cat(paste0("# need to check these since they were missing allocation data"),sep="\n")
+for (i in 1:nrow(reallocations_research)) {
+  allocate = "graph indexer actions queue reallocate "
+  network = " --network arbitrum-one"
+  cat(paste0(allocate, reallocations_research$deployment_id[i]," ",reallocations_research$new_brain[i],network," # ",reallocations_research$subgraph_name[i]),sep="\n")
 }
 ```
 
