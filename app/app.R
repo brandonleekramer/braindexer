@@ -14,15 +14,15 @@ braindexer_api_key = "70aaeb3f153cc384625e9d49b4958aef"
 
 # pages -----------------------------------------------------
 #setwd("/Users/bkram/Documents/git/braindexer/app")
-source("./thegraphR.R")
+#source("./thegraphR.R")
 source("./home.R")
 source("./status.R")
 source("./queries.R")
-source("./rewards.R")
-source("./delegators.R")
-source("./top-indexers.R")
-source("./top-subgraphs.R")
-source("./docs.R")
+#source("./rewards.R")
+#source("./delegators.R")
+#source("./top-indexers.R")
+#source("./top-subgraphs.R")
+#source("./docs.R")
 
 # navbar ----------------------------------------------------
 
@@ -65,9 +65,9 @@ ui <- page_navbar(
     #width = 55,
     style = "margin:30px 20px 0px 20px" # top right bottom left
   ),""),
-  nav_panel("Home", p(home_page())),
-  nav_panel("Status", p(status_page())),
-  #nav_panel("Queries", p(queries_page())),
+  #nav_panel("Home", p(home_page())),
+  #nav_panel("Status", p(status_page())),
+  nav_panel("Queries", p(queries_page())),
   #nav_panel("Rewards", p(rewards_page())),
   #nav_panel("Delegators", p(delegators_page())),
   #nav_panel("Top Subgraphs", p(top_subgraphs_page())),
