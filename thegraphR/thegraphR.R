@@ -274,11 +274,11 @@ getDeploymentStats = function(my_api_key){
   
   dataOutput = query_subgraph(graphql_query = dataOutput,
                               subgraph_id = "DZz4kDTdmzWLWsV373w2bSmoar3umKKH9y82SUKr5qmp",
-                              api_key = my_api_key)
+                              api_key = "70aaeb3f153cc384625e9d49b4958aef")
   dataOutput = as.data.frame(dataOutput$subgraphDeployments) %>% 
     mutate(signalled_tokens = round(as.numeric(signalledTokens)/(10^18),4),
            staked_tokens = round(as.numeric(stakedTokens)/(10^18),4),
-           proportion = round(((signalled_tokens)/(total_signal))/((staked_tokens)/(total_staked)),4),
+           proportion = ((signalled_tokens)/(total_signal))/((staked_tokens)/(total_staked)),
            proportion = if_else(is.infinite(proportion), 0, proportion)) %>% 
     rename(deployment_id = ipfsHash) %>% 
     select(deployment_id, signalled_tokens, staked_tokens, proportion) %>% 

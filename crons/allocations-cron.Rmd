@@ -111,9 +111,13 @@ combined_queries_by_period
   <br>
   <summary><font size="3"> **Top Indexers by Query Volume** </font></summary>
 ```{r, fig.height=5.5, fig.width=9.5, fig.align="center", echo=FALSE, warning=FALSE, message=FALSE}
+upgrade_indexer = "0xbdfb5ee5a2abf4fc7bb1bd1221067aef7f9de491"
+
 indexers_plot = combined_queries_by_period %>% 
   left_join(indexers, by = "wallet_address") %>% 
-  mutate(indexer_name = replace_na(indexer_name, "Unknown Indexer")) %>% 
+  mutate(indexer_name = replace_na(indexer_name, "Unknown Indexer"),
+         indexer_name = if_else(wallet_address == upgrade_indexer, 
+                                "Upgrade Indexer", indexer_name)) %>% 
   group_by(indexer_name, period) %>% 
   summarise(queries_served = sum(queries_served),
             subgraphs_served = sum(subgraphs_served)) 
@@ -220,7 +224,8 @@ datatable(tiered_subgraphs %>%
                    success_rate = success_rate,
                    avg_latency = str_c(avg_latency, " ms"),
                    display_name = str_replace_all(display_name, " 🧠", ""),
-                   display_name = if_else(braindexer == "Syncing", str_c("🧠 ", display_name), display_name),
+                   display_name = if_else(braindexer == "Syncing", 
+                                          str_c("🧠 ", display_name), display_name),
                    display_name = replace_na(display_name, "♻️ Deprecated")) %>% 
             select(time_period, everything(), -chart_rank, -period_rank, -time_period_rank, -braindexer), 
             caption = "Top Graph Network Subgraphs by Query Volume (Past 14 Days)", 
@@ -262,7 +267,7 @@ last_3D_plots = last_3D_data %>%
         legend.position = "none") +
   ggtitle("Top Graph Network Subgraphs by Query Volume (Past 3D - Top 40)") + 
   ylab("Number of Queries") +
-  scale_fill_manual(values=c("#054C70", "#089DEA", "#E9A1C9")) + 
+  scale_fill_manual(values=c("#E9A1C9")) + 
   scale_y_continuous(labels = comma)
 ggplotly(last_3D_plots, tooltip = c("text")) 
 ```
