@@ -93,7 +93,8 @@ datatable(viz_indexer_allocations %>% select(-deployment_id),
 ```
 
 ```{r}
-
+print all of the minimal reallocations
+- anything with less than 1.0 > allocate to 1000
 ```
 
 - rewards proportion
