@@ -1,0 +1,107 @@
+---
+output: html_document
+---
+
+```{css, echo=FALSE}
+/* this chunk of code centers all of the headings */
+h1, h2, h3 {
+  text-align: center;
+}
+```
+
+<br>
+
+```{r pressure, echo=FALSE, fig.align="center", out.width = '150%'}
+knitr::include_graphics("query-catcher-header.png")
+```
+
+<br>
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+rm(list = ls())
+
+wallet_to_analyze = "0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e"
+
+library("tidyverse")
+library("janitor")
+library("lubridate")
+library("DT")
+library("onchainR")
+library("here")
+source(here("src", "helpers", "notion.R")) #library("notionR")
+source("~/Documents/git/secrets.R")
+source("~/Documents/git/braindexer/thegraphR/thegraphR.R")
+`%notin%` <- Negate(`%in%`)
+```
+
+#### Current Allocation Overview
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# total state + signal >> update to subgraph when not broken
+total_signal = 4149662.62
+total_stake = 750410433.41 + 1585084599.50
+
+# grab all subgraph ID data 
+display_names = bind_rows(
+  subgraphDisplayNames(0),
+  subgraphDisplayNames(1000),
+  subgraphDisplayNames(2000)
+) %>% select(-deployment_id) %>% 
+  filter(network == "mainnet")
+
+# grab indexer's allocation data
+indexer_allocations = allocationsByIndexer(wallet_to_analyze) %>% 
+  left_join(display_names, by = "subgraph_id") %>% 
+  select(display_name, deployment_id, everything()) %>% 
+  mutate(proportion = round(((signalled_tokens/total_signal))
+         /((staked_tokens/total_stake)),3),
+         proportion = if_else(is.infinite(proportion), 0, proportion))
+
+# check + remove duplicates
+duplicates_check = indexer_allocations %>% 
+  distinct(deployment_id, subgraph_id) %>% 
+  janitor::get_dupes(deployment_id) %>% 
+  distinct(deployment_id) %>% left_join(
+    indexer_allocations, by = "deployment_id") %>% 
+  select(deployment_id, subgraph_id) 
+indexer_allocations = indexer_allocations %>% 
+  filter(subgraph_id %notin% 
+           c("Gdu6LrkdgUWdN8z8CmFzgASoKiSsNYt6HbFjTDurdcm1",
+             "CTsPUobKe8nsenurPrg2CcinSoAvLp7XrUZmEWQCzkHS",
+             "DCr8gWACNYngjzTPB1Rg5zWtRBajaiRnkh253hBEDpgN",
+             "FvNi11TDfCsJMyJtXUn9EKFpJR5WhQUD92sZiUqFGBGt"))
+
+source("~/Documents/git/braindexer/thegraphR/thegraphR.R")
+# check blocks behind to check if unallocating is ok 
+days_in_past = as.numeric(as.POSIXct((
+  as.Date(today(), format="%d/%m/%Y") - 3), format="%Y-%m-%d"))
+blocks_behind_df = maxBlocksBehind(wallet_to_analyze, days_in_past) %>% 
+  #select(subgraph_deployment_ipfs_hash, avg_indexer_blocks_behind) %>% 
+  rename(deployment_id = subgraph_deployment_ipfs_hash,
+         blocks_behind = avg_indexer_blocks_behind) 
+
+indexer_allocations = indexer_allocations %>% 
+  left_join(blocks_behind_df, by = "deployment_id")
+
+viz_indexer_allocations = indexer_allocations %>% select(
+  display_name, allocated_tokens, proportion, blocks_behind, 
+  avg_latency_ms, query_count, total_query_fees, deployment_id)
+
+# visualize tabe
+datatable(viz_indexer_allocations %>% select(-deployment_id), 
+  caption = "Current Allocations Overview", rownames = FALSE)
+```
+
+```{r}
+
+```
+
+- rewards proportion
+- blocks behind
+- stake + signal
+
+
+```{r}
+
+
+```

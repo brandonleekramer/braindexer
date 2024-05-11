@@ -1,0 +1,278 @@
+---
+date: "2024-05-11"
+output: html_document
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+rm(list = ls())
+
+library("tidyverse")
+library("janitor")
+library("lubridate")
+library("DT")
+library("onchainR")
+#library("notionR")
+library("here")
+source(here("src", "helpers", "notion.R"))
+source("~/Documents/git/secrets.R")
+source("~/Documents/git/braindexer/thegraphR/thegraphR.R")
+`%notin%` <- Negate(`%in%`)
+
+hardcoded_total_stake = 750309625.47 + 1585059501.99
+hardcoded_total_signal = 4149662.62
+
+
+notion_allocations = getNotionDatabase(
+  braindexer_secret, "71479f56f5a14e308aecd90229e59f97") %>% 
+  janitor::clean_names() %>% 
+  rename(notion_id = id,
+         subgraph_name = properties_subgraph_title_plain_text,
+         deployment_id = properties_deployment_id_rich_text_plain_text,
+         entities = properties_entities_number,
+         grafting = properties_grafting_rich_text_annotations_code,
+         status = properties_status_select_name) %>% 
+  filter(status %notin% c("Mainnet", "Deleted", "Error")) %>% 
+  select(status, subgraph_name, deployment_id, entities, grafting, notion_id)
+
+# warning: the getDeploymentStats(braindexer_api_key) function is hard coded 
+# until the arbitrum analytics subgraph is fixed 
+unix_before_1 = as.numeric(as.POSIXct((
+  as.Date(today(), format="%d/%m/%Y") - 1), format="%Y-%m-%d"))
+deployment_data = queryVolumeByDeployment(
+  unix_before_1, "mainnet", "mainnet-arbitrum") %>% 
+  #select(deployment_id, query_count, total_query_fees) %>%
+  left_join(getDeploymentStats(braindexer_api_key), by = "deployment_id") %>% 
+  mutate(signalled_tokens = replace_na(signalled_tokens, 0),
+         staked_tokens = replace_na(staked_tokens, 0),
+         proportion = replace_na(proportion, 0),
+         query_fees_grt = round(as.numeric(total_query_fees), 4)) %>% 
+  select(deployment_id, proportion, signalled_tokens, 
+         staked_tokens, query_count, query_fees_grt) %>% 
+  arrange(desc(proportion))
+
+
+braindexer_allocations = allocationsByIndexer(
+  "0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e") %>% 
+  select(deployment_id, allocated_tokens) %>% 
+  mutate(allocated_tokens = round(allocated_tokens, 2))
+
+braindexer_statuses = maxBlocksBehind(
+  "0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e", unix_before_1) %>% 
+  select(subgraph_deployment_ipfs_hash, avg_indexer_blocks_behind) %>% 
+  rename(deployment_id = subgraph_deployment_ipfs_hash,
+         blocks_behind = avg_indexer_blocks_behind) 
+
+braindexer_allocations = notion_allocations %>% 
+  left_join(braindexer_allocations, by = "deployment_id") %>% 
+  left_join(deployment_data, by = "deployment_id") %>% 
+  left_join(braindexer_statuses, by = "deployment_id") %>% 
+  select(status, subgraph_name, query_count, query_fees_grt, 
+         proportion, allocated_tokens,  signalled_tokens, staked_tokens, 
+         blocks_behind, entities, grafting, deployment_id, notion_id) %>% 
+  arrange(desc(proportion))
+```
+
+<details>
+    <br>
+    <summary><font size="3"> **Allocations Details** </font></summary>
+
+**Current Braindexer Allocations**
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+braindexer_summary = braindexer_allocations %>% 
+  mutate(status = if_else(blocks_behind < 2, "🟢", status),
+         status = if_else(blocks_behind < 5 & blocks_behind > 2, "🟡", status),
+         status = if_else(blocks_behind > 5, "🔴", status),
+         status = if_else(status %notin% c("🟢","🟡","🔴"), "🔎", status)) %>% 
+  select(status, subgraph_name, proportion, allocated_tokens, 
+         query_count, query_fees_grt, deployment_id) %>% 
+  arrange(desc(allocated_tokens), desc(query_count))
+            
+datatable(braindexer_summary %>% select(-deployment_id), 
+          caption = "Current Braindexer Allocations", rownames = FALSE)
+```
+
+**New/Proposed Braindexer Allocations**
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# proportion = (signalled_tokens)/(total_signal) / (staked_tokens)/(total_staked)
+# new_allocation = (signalled_tokens/total_staked)/(total_signal/old_allocation)
+new_prop = 1.0
+
+new_allocations = braindexer_allocations %>% 
+  rename(current_prop = proportion,
+         current_signal = signalled_tokens,
+         current_stake = staked_tokens,
+         current_brain = allocated_tokens) %>% 
+  mutate(#total_signal = getGraphArbitrumStats("signalled_tokens"),
+         #total_stake = getGraphArbitrumStats("staked_tokens") + getGraphArbitrumStats("delegated_tokens"),
+         total_stake = hardcoded_total_stake,
+         total_signal = hardcoded_total_signal,
+         nobrain_stake = (current_stake-current_brain),
+         nobrain_prop = round(((current_signal)/(total_signal))/
+                                ((nobrain_stake)/(total_stake)),4),
+         new_prop = new_prop,
+         new_stake = (current_signal*total_stake)/(total_signal*new_prop),
+         new_brain = if_else(current_stake < new_stake, round((new_stake), 0), 5000),
+         new_brain = if_else(is.na(new_brain), current_brain, new_brain), 
+         action = if_else(current_stake < new_stake, "reallocate", "lower"),
+         action = if_else(is.na(nobrain_prop), "research", action),
+         status = if_else(status == "Synced", "🟢", status),
+                   status = if_else(status == "Failed", "🔴", status),
+                   status = if_else(status == "Offchain", "🟡", status)) %>% 
+  filter(!is.na(new_brain)) %>% 
+  select(status, subgraph_name, current_prop, nobrain_prop, current_brain, new_prop, new_brain, nobrain_stake, 
+         current_stake, new_stake, current_signal, query_count, action, deployment_id)
+
+datatable(new_allocations %>% select(status, subgraph_name, current_prop, current_brain, new_brain, current_signal, current_stake), 
+          caption = "Current Non-Braindexer Allocations", rownames = FALSE)
+```
+
+**Current Non-Braindexer Allocations**
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+nonbraindexer_allocations = deployment_data %>% 
+  rename(current_signal = signalled_tokens,
+         current_prop = proportion) %>% 
+  filter(current_signal > 1000 & deployment_id %notin% braindexer_allocations$deployment_id) %>% 
+  left_join(subgraphDisplayNames() %>% 
+  filter(network == "mainnet"), by = "deployment_id") %>% 
+  mutate(total_signal = hardcoded_total_signal,
+         total_stake = hardcoded_total_stake,
+         new_prop = new_prop,
+         sugg_allocation = round((current_signal*total_stake)/(total_signal*new_prop),0))
+
+datatable(nonbraindexer_allocations %>% 
+            select(display_name, current_prop, new_prop, sugg_allocation, current_signal, staked_tokens, query_count, query_fees_grt), 
+          caption = "Current Non-Braindexer Allocations", rownames = FALSE)
+```
+
+**Search Subgraphs:** [Graphscan](https://arbitrum.graphscan.io/#subgraphs) | [Graph Explorer](https://thegraph.com/explorer) | [GraphSeer](https://beta.graphseer.com/)
+<br>
+<br>
+
+</details>
+
+<br>
+
+<details>
+    <br>
+    <summary><font size="3"> **Allocation Code & Indexing Links** </font></summary>
+
+**Access Server & Check Status**
+
+**Note:** These links and commands will get you connected to the server. If you have errors, contact Braindexer engineers to grant you authorization. 
+
+[Braindexer Explorer](https://thegraph.com/explorer/profile/0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e?view=Indexing&chain=arbitrum-one) | [Braindexer Graphscan](https://arbitrum.graphscan.io/profile?id=0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e#indexer-allocations) | [OK Graph](https://okgraph.xyz/) | [The Graph Indexer Docs](https://thegraph.com/docs/en/network/indexing/) | [The Graph Error Docs](https://github.com/graphprotocol/indexer/blob/main/docs/errors.md#ie064)
+
+```{r, echo=FALSE, include=FALSE}
+reallocations_research = new_allocations %>% 
+  filter(action == "research") %>% 
+  select(subgraph_name, deployment_id, action, new_brain) %>% 
+  arrange(new_brain)
+
+reallocations_lower = new_allocations %>% 
+  filter(action == "lower") %>% 
+  select(subgraph_name, deployment_id, action, new_brain) %>% 
+  arrange(new_brain)
+
+reallocations_optimal = new_allocations %>% 
+  filter(action == "reallocate") %>% 
+  select(subgraph_name, deployment_id, action, new_brain) %>% 
+  arrange(new_brain)
+
+sum(reallocations_research$new_brain)
+sum(reallocations_lower$new_brain)
+sum(reallocations_optimal$new_brain)
+reallocations_research
+reallocations_lower
+reallocations_optimal
+```
+
+```{shell}
+# connect to ethereum/arbitrum
+ssh graph@5.9.85.100 
+docker run --entrypoint /bin/bash -it ghcr.io/graphprotocol/indexer-cli:v0.20.22
+graph indexer connect http://5.9.85.100:30800
+graph indexer connect http://5.9.85.100:30801
+
+# statuses 
+graph indexer status --network arbitrum-one
+graph indexer actions get --status queued --network arbitrum-one
+
+graph indexer status --network mainnet
+graph indexer actions get --status queued --network mainnet
+```
+
+**Minimal Allocations**
+
+**Note:** You can double check but these allocations likely fall below our optimization threshold of `new_prop`.
+
+```{r, echo=FALSE, comment=NA}
+options(scipen = 999)
+#cat(paste0("# double check but looks like all of these now fall below our optimization threshold of ", new_prop),sep="\n")
+for (i in 1:nrow(reallocations_lower)) {
+  allocate = "graph indexer actions queue reallocate "
+  network = " --network arbitrum-one"
+  cat(paste0(allocate, reallocations_lower$deployment_id[i]," ",reallocations_lower$new_brain[i],network," # ",reallocations_lower$subgraph_name[i]),sep="\n")
+}
+```
+
+**Research Allocations**
+
+**Note:** These need to check these since they were missing allocation data above. 
+
+```{r, echo=FALSE, comment=NA}
+options(scipen = 999)
+#cat(paste0("# need to check these since they were missing allocation data"),sep="\n")
+for (i in 1:nrow(reallocations_research)) {
+  allocate = "graph indexer actions queue reallocate "
+  network = " --network arbitrum-one"
+  cat(paste0(allocate, reallocations_research$deployment_id[i]," ",reallocations_research$new_brain[i],network," # ",reallocations_research$subgraph_name[i]),sep="\n")
+}
+```
+
+**Optimized Allocations**
+
+**Note:** Run these last and you'll need to adjust the last few to fall under the stake we have available.
+
+```{r, echo=FALSE, comment=NA}
+options(scipen = 999)
+#cat(paste0("# run these last and you'll need to adjust the last few to fall under the stake we have available"),sep="\n")
+for (i in 1:nrow(reallocations_optimal)) {
+  allocate = "graph indexer actions queue reallocate "
+  network = " --network arbitrum-one"
+  cat(paste0(allocate, reallocations_optimal$deployment_id[i]," ",reallocations_optimal$new_brain[i],network," # ",reallocations_optimal$subgraph_name[i]),sep="\n")
+}
+```
+
+**Additional Commands**
+
+```{shell}
+# actions
+graph indexer actions queue allocate deployment_id 100
+graph indexer actions queue reallocate deployment_id allocation_id 100
+graph indexer actions queue unallocate deployment_id allocation_id
+graph indexer rules prepare deployment_id 
+graph indexer actions approve id --network arbitrum-one
+graph indexer actions execute approved
+
+# grafting 
+curl -XPOST https://api.thegraph.com/ipfs/api/v0/cat\?arg\=deployment_id -s | grep graft -A 1
+
+# force unallocate
+graph indexer actions queue unallocate deployment_id allocation_id 0x0000000000000000000000000000000000000000000000000000000000000000 --force --network arbitrum-one
+```
+
+</details>
+
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>

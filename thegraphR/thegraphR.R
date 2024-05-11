@@ -38,20 +38,26 @@ queryVolumeByDeployment = function(unix_timestamp, chain_id, gateway_id){
 # query_allocationsByIndexer gets first 1000 current allocations for Indexer wallet address
 # TODO: Add autopagination and subgraph names to this query
 allocationsByIndexer = function(wallet_address){
+  #wallet_address = "0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e"
   dataOutputQuery = str_c('{
     indexers(
       first: 1000
       orderBy: allocationCount
       orderDirection: desc
-      where: {id: "0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e"}
+      where: {id: "',wallet_address,'"}
     ) {
-      allocations(orderBy: allocatedTokens) {
+    allocations(first: 1000, orderBy: allocatedTokens) {
         id
         allocatedTokens
         subgraphDeployment {
-          id
           ipfsHash
           signalledTokens
+          stakedTokens
+          versions {
+            subgraph {
+              id
+            }
+          }
         }
       }
     }
@@ -63,14 +69,23 @@ allocationsByIndexer = function(wallet_address){
     unnest(allocations) %>% 
     rename(allocation_id = id) %>%
     unnest(subgraphDeployment) %>% 
+    unnest(versions) %>%
+    unnest(subgraph) %>%
+    rename(subgraph_id = id) %>%
     mutate(allocatedTokens = as.numeric(allocatedTokens)/(10^18),
-           signalledTokens = as.numeric(signalledTokens)/(10^18)) %>% 
-    rename(subgraph_id = id,
-           deployment_id = ipfsHash,
+           signalledTokens = as.numeric(signalledTokens)/(10^18),
+           stakedTokens = as.numeric(stakedTokens)/(10^18),
+           allocatedTokens = round(allocatedTokens, 2),
+           signalledTokens = round(signalledTokens, 2),
+           stakedTokens = round(stakedTokens, 2)) %>% 
+    rename(deployment_id = ipfsHash,
            allocated_tokens = allocatedTokens,
-           signalled_tokens = signalledTokens) %>% 
-    select(deployment_id, allocated_tokens, signalled_tokens, subgraph_id, allocation_id) %>% 
+           signalled_tokens = signalledTokens,
+           staked_tokens = stakedTokens) %>% 
+    select(deployment_id, allocated_tokens, signalled_tokens, 
+           staked_tokens, subgraph_id, allocation_id) %>% 
     arrange(desc(allocated_tokens))
+  
   dataOutput
 }
 
@@ -110,30 +125,31 @@ indexersByQueryVolume = function(unix_timestamp){
 }
 
 
-subgraphDisplayNames = function(){
+subgraphDisplayNames = function(skip_n){
   metadataQuery = str_c('{
-  subgraphs(first: 1000) {
+  subgraphs(skip:',skip_n,', first: 1000) {
     metadata {
       displayName
     }
+    id
     currentVersion {
       subgraphDeployment {
         manifest {
           id
           network
-          }
         }
       }
     }
-  }')
+  }
+ }')
   
   # clean subgraph data 
   networkSubgraph = "https://api.thegraph.com/subgraphs/name/graphprotocol/graph-network-arbitrum"
   metadataQuery = query_hosted_subgraph(metadataQuery, networkSubgraph)
-  metadataQuery = metadataQuery$subgraphs 
+  metadataQuery = metadataQuery$subgraphs %>% rename(subgraph_id = id)
   for (var in list("metadata", "currentVersion", "subgraphDeployment", "manifest")){
-    metadataQuery = unnest_longer(metadataQuery, var, 
-                                       indices_include = FALSE) %>% unnest(var)
+    metadataQuery = unnest_longer(
+      metadataQuery, var, indices_include = FALSE) %>% unnest(var)
   }
   
   metadataQuery = metadataQuery %>% 
@@ -191,7 +207,8 @@ prepare_tiered_subgraphs = function(data, lowerbound, upperbound){
 queryVolumeByDeploymentOverTime = function(unix_timestamp, indexer_sync_list){
   
   subgraphs_metadata = subgraphDisplayNames()
-  data_output = queryVolumeByDeployment(unix_timestamp, "mainnet", "mainnet-arbitrum") %>% 
+  data_output = queryVolumeByDeployment(
+    unix_timestamp, "mainnet", "mainnet-arbitrum") %>% 
     rename(success_rate = gateway_query_success_rate,
            avg_latency = avg_gateway_latency_ms) %>% 
     mutate(success_rate = round(as.numeric(success_rate),4),
@@ -269,8 +286,10 @@ getDeploymentStats = function(my_api_key){
     }
   }')
   
-  total_staked = getGraphArbitrumStats("staked_tokens") + getGraphArbitrumStats("delegated_tokens")
-  total_signal = getGraphArbitrumStats("signalled_tokens")
+  #total_staked = getGraphArbitrumStats("staked_tokens") + getGraphArbitrumStats("delegated_tokens")
+  #total_signal = getGraphArbitrumStats("signalled_tokens")
+  total_staked = 750309625.47 + 1585059501.99
+  total_signal = 4149662.62
   
   dataOutput = query_subgraph(graphql_query = dataOutput,
                               subgraph_id = "DZz4kDTdmzWLWsV373w2bSmoar3umKKH9y82SUKr5qmp",
@@ -289,13 +308,18 @@ getDeploymentStats = function(my_api_key){
 
 maxBlocksBehind = function(indexer_wallet, unix_day_start){
   dataOutput = str_c('{allocationDailyDataPoints(
+    first: 1000
     where: {indexer: "',indexer_wallet,'", dayStart_gte: "',unix_day_start,'"}
     orderDirection: desc
-    orderBy: max_indexer_blocks_behind
+    orderBy: query_count
   ) {
     subgraph_deployment_ipfs_hash
     avg_indexer_blocks_behind
     max_indexer_blocks_behind
+    proportion_indexer_200_responses
+    avg_indexer_latency_ms
+    total_query_fees
+    query_count
     }
   }')
   
@@ -303,9 +327,13 @@ maxBlocksBehind = function(indexer_wallet, unix_day_start){
   dataOutput = query_hosted_subgraph(dataOutput, qosSubgraph)
   dataOutput = as.data.frame(dataOutput$allocationDailyDataPoints) %>% 
     distinct(subgraph_deployment_ipfs_hash, .keep_all = TRUE) %>% 
-    mutate(avg_indexer_blocks_behind = as.numeric(avg_indexer_blocks_behind),
-           max_indexer_blocks_behind = as.numeric(max_indexer_blocks_behind),
-           avg_indexer_blocks_behind = round(avg_indexer_blocks_behind, 2))
+    mutate(avg_indexer_blocks_behind = round(as.numeric(avg_indexer_blocks_behind),2),
+           max_indexer_blocks_behind = round(as.numeric(max_indexer_blocks_behind),2),
+           success_rate = round(as.numeric(proportion_indexer_200_responses),6)*100,
+           avg_latency_ms = round(as.numeric(avg_indexer_latency_ms),2),
+           total_query_fees = round(as.numeric(total_query_fees),4),
+           query_count = as.numeric(query_count)) %>% 
+    select(-proportion_indexer_200_responses, -avg_indexer_latency_ms)
   dataOutput
 }
 
