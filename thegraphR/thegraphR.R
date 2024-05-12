@@ -206,7 +206,7 @@ prepare_tiered_subgraphs = function(data, lowerbound, upperbound){
 
 queryVolumeByDeploymentOverTime = function(unix_timestamp, indexer_sync_list){
   
-  subgraphs_metadata = subgraphDisplayNames()
+  subgraphs_metadata = subgraphDisplayNames(0)
   data_output = queryVolumeByDeployment(
     unix_timestamp, "mainnet", "mainnet-arbitrum") %>% 
     rename(success_rate = gateway_query_success_rate,

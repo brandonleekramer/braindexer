@@ -2,5 +2,6 @@
 .Rhistory
 .RData
 .Ruserdata
-/design-assets/
+/design/
 braindexer.slackr
+/crons/braindexer.slackr
