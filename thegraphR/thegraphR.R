@@ -204,23 +204,24 @@ prepare_tiered_subgraphs = function(data, lowerbound, upperbound){
   tiered_subgraphs
 }
 
-queryVolumeByDeploymentOverTime = function(unix_timestamp, indexer_sync_list){
+queryVolumeByDeploymentOverTime = function(unix_timestamp, chain_id, subgraphs_metadata){
   
-  subgraphs_metadata = subgraphDisplayNames(0)
   data_output = queryVolumeByDeployment(
-    unix_timestamp, "mainnet", "mainnet-arbitrum") %>% 
+    unix_timestamp, chain_id, "mainnet-arbitrum") %>% 
     rename(success_rate = gateway_query_success_rate,
            avg_latency = avg_gateway_latency_ms) %>% 
     mutate(success_rate = round(as.numeric(success_rate),4),
            avg_latency = round(as.numeric(avg_latency),0)) %>% 
     group_by(deployment_id) %>% 
     summarise(query_count = sum(query_count),
-              success_rate = str_c(round(mean(success_rate),4)*100,"%"),
+              success_rate = str_c(round(mean(success_rate)*100,4),"%"),
               avg_latency = round(mean(avg_latency), 0)) %>% 
     left_join(subgraphs_metadata, by = "deployment_id") %>% 
-    select(display_name, everything(), -network) %>% 
+    group_by(query_count, success_rate, avg_latency, deployment_id, network) %>% 
+    slice(1L) %>% 
+    select(display_name, everything(), network) %>% 
     mutate(rank = rank(-query_count, ties.method= "first")) %>%
-    select(rank, display_name, query_count, success_rate, avg_latency, deployment_id) %>% 
+    select(rank, display_name, query_count, success_rate, avg_latency, deployment_id, network) %>% 
     arrange(desc(query_count))
   data_output
 }

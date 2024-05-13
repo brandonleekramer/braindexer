@@ -51,22 +51,42 @@ network_subgraph = "https://api.thegraph.com/subgraphs/name/graphprotocol/graph-
 #source("~/Documents/git/braindexer/thegraphR/thegraphR.R")
 braindexer_allocations = allocationsByIndexer("0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e")
 braindexer_syncing = braindexer_allocations$deployment_id
-subgraphs_metadata = subgraphDisplayNames(0)
+subgraphs_metadata = bind_rows(
+    subgraphDisplayNames(0),
+    subgraphDisplayNames(1000),
+    subgraphDisplayNames(2000)
+) 
 
-daily_subgraphs = queryVolumeByDeploymentOverTime(unix_before_3) %>% 
-  mutate(braindexer = if_else(deployment_id %in% braindexer_syncing, "Syncing", "Not Syncing"),
-         time_period_rank = "4", time_period = "Past 3D") 
+daily_subgraphs = bind_rows(
+  queryVolumeByDeploymentOverTime(unix_before_3, "mainnet", subgraphs_metadata),
+  queryVolumeByDeploymentOverTime(unix_before_3, "matic", subgraphs_metadata),
+  queryVolumeByDeploymentOverTime(unix_before_3, "arbitrum-one", subgraphs_metadata)) %>% 
+  mutate(braindexer = if_else(
+    deployment_id %in% braindexer_syncing, "Syncing", "Not Syncing"),
+         time_period_rank = "4", time_period = "Past 3D")
 
-weekly_subgraphs = queryVolumeByDeploymentOverTime(unix_before_7) %>% 
-  mutate(braindexer = if_else(deployment_id %in% braindexer_syncing, "Syncing", "Not Syncing"),
-         time_period_rank = "3", time_period = "Past 7D") 
+weekly_subgraphs = bind_rows(
+  queryVolumeByDeploymentOverTime(unix_before_7, "mainnet", subgraphs_metadata),
+  queryVolumeByDeploymentOverTime(unix_before_7, "matic", subgraphs_metadata),
+  queryVolumeByDeploymentOverTime(unix_before_7, "arbitrum-one", subgraphs_metadata)) %>% 
+  mutate(braindexer = if_else(
+    deployment_id %in% braindexer_syncing, "Syncing", "Not Syncing"),
+         time_period_rank = "3", time_period = "Past 7D")
 
-fortnite_subgraphs = queryVolumeByDeploymentOverTime(unix_before_14) %>% 
-  mutate(braindexer = if_else(deployment_id %in% braindexer_syncing, "Syncing", "Not Syncing"),
+fortnite_subgraphs = bind_rows(
+  queryVolumeByDeploymentOverTime(unix_before_14, "mainnet", subgraphs_metadata),
+  queryVolumeByDeploymentOverTime(unix_before_14, "matic", subgraphs_metadata),
+  queryVolumeByDeploymentOverTime(unix_before_14, "arbitrum-one", subgraphs_metadata)) %>% 
+  mutate(braindexer = if_else(
+    deployment_id %in% braindexer_syncing, "Syncing", "Not Syncing"),
          time_period_rank = "2", time_period = "Past 14D")
 
-monthly_subgraphs = queryVolumeByDeploymentOverTime(unix_before_30) %>% 
-  mutate(braindexer = if_else(deployment_id %in% braindexer_syncing, "Syncing", "Not Syncing"),
+monthly_subgraphs = bind_rows(
+  queryVolumeByDeploymentOverTime(unix_before_30, "mainnet", subgraphs_metadata),
+  queryVolumeByDeploymentOverTime(unix_before_30, "matic", subgraphs_metadata),
+  queryVolumeByDeploymentOverTime(unix_before_30, "arbitrum-one", subgraphs_metadata)) %>% 
+  mutate(braindexer = if_else(
+    deployment_id %in% braindexer_syncing, "Syncing", "Not Syncing"),
          time_period_rank = "1", time_period = "Past 30D")
 
 combined_subgraphs = bind_rows(
@@ -106,6 +126,18 @@ tier2_subgraphs = prepare_tiered_subgraphs(combined_subgraphs, 25, 49)
 tier3_subgraphs = prepare_tiered_subgraphs(combined_subgraphs, 50, 74)
 tier4_subgraphs = prepare_tiered_subgraphs(combined_subgraphs, 75, 100)
 
+combined_queries_by_period = combined_queries_by_period %>% 
+  left_join(indexers, by = "wallet_address") %>% 
+  mutate(indexer_name = replace_na(indexer_name, "Unknown Indexer"),
+         indexer_name = if_else(
+           wallet_address == "0xbdfb5ee5a2abf4fc7bb1bd1221067aef7f9de491", 
+           "Upgrade Indexer", indexer_name)) %>% 
+  group_by(indexer_name, period) %>% 
+  summarise(queries_served = sum(queries_served),
+            query_fees_grt = sum(query_fees_grt),
+            subgraphs_served = sum(subgraphs_served),
+            wallet_addresses = paste(wallet_address, collapse = ","))
+
 combined_queries_by_period
 ```
 
@@ -113,24 +145,13 @@ combined_queries_by_period
   <br>
   <summary><font size="3"> **Top Indexers by Query Volume** </font></summary>
 ```{r, fig.height=5.5, fig.width=9.5, fig.align="center", echo=FALSE, warning=FALSE, message=FALSE}
-upgrade_indexer = "0xbdfb5ee5a2abf4fc7bb1bd1221067aef7f9de491"
-
-indexers_plot = combined_queries_by_period %>% 
-  left_join(indexers, by = "wallet_address") %>% 
-  mutate(indexer_name = replace_na(indexer_name, "Unknown Indexer"),
-         indexer_name = if_else(wallet_address == upgrade_indexer, 
-                                "Upgrade Indexer", indexer_name)) %>% 
-  group_by(indexer_name, period) %>% 
-  summarise(queries_served = sum(queries_served),
-            subgraphs_served = sum(subgraphs_served)) 
-
-indexers_rank30d = indexers_plot %>% 
+indexers_rank30d = combined_queries_by_period %>% 
   filter(period == "30D") %>% 
   arrange(desc(queries_served)) 
 
 indexers_rank30d$rank_30d <-  rank(-indexers_rank30d$queries_served)
 
-indexers_plot = indexers_plot %>%
+indexers_plot = combined_queries_by_period %>%
   left_join(indexers_rank30d %>% select(rank_30d, indexer_name), by = "indexer_name") %>% 
   filter(rank_30d < 26) %>% 
   arrange(rank_30d) %>% 
@@ -163,32 +184,30 @@ ggplotly(indexers_plot, tooltip = c("text"))
 ```
 
 ```{r, echo=FALSE}
-queries_table_3 = queries_by_period_3 %>% 
-  mutate(queries_3d = str_c(format(queries_served, nsmall=0, big.mark=","),
-                             " (",subgraphs_served,")"),
-         fees_3d = paste0(
-           "USD: $",format(round(query_fees_grt*grt_price, 2), nsmall=0, big.mark=","), "\n",
-           "GRT: ",format(round(query_fees_grt, 2), nsmall=0, big.mark=","))) %>% 
-  select(wallet_address, queries_3d, fees_3d)
+indexers_3d = combined_queries_by_period %>% 
+  filter(period == "3D") %>%
+  select(-period, -wallet_addresses) %>% 
+  arrange(desc(queries_served)) %>% 
+  mutate(queries_served = format(queries_served, nsmall=0, big.mark=","),
+         query_fees_grt = format(round(query_fees_grt,2), nsmall=0, big.mark=",")) 
 
-queries_table_30 = queries_by_period_30 %>% 
-  mutate(queries_30d = str_c(format(queries_served, nsmall=0, big.mark=","),
-                             " (",subgraphs_served,")"),
-         fees_30d = paste0(
-           "USD: $",format(round(query_fees_grt*grt_price, 2), nsmall=0, big.mark=","), "\n",
-           "GRT: ",format(round(query_fees_grt, 2), nsmall=0, big.mark=","))) %>% 
-  select(rank, wallet_address, queries_30d, fees_30d)
-
-datatable(queries_table_30 %>% 
-  left_join(queries_table_3, by = "wallet_address") %>% 
-  left_join(indexers, by = "wallet_address") %>% 
-  distinct(rank, indexer_name, queries_30d, fees_30d, queries_3d, fees_3d) %>% 
-  mutate(indexer_name = str_replace_all(indexer_name, "Braindexer", "Braindexer")) %>% 
-  #select(rank, indexer_name, queries_3d, fees_3d, queries_30d, fees_30d) %>% 
-  arrange(rank), 
-          caption = "Top Indexers Serving Queries over Past 30 Days", 
-          rownames = FALSE,  options = list(pageLength = 15))
+datatable(indexers_3d, 
+          caption = "Top Indexers Serving Queries over Past 3 Days", 
+          rownames = FALSE,  options = list(pageLength = 10))
 ```
+
+```{r, echo=FALSE}
+datatable(combined_queries_by_period %>% 
+  filter(period == "30D") %>%
+  select(-period, -wallet_addresses) %>% 
+  arrange(desc(queries_served)) %>% 
+  mutate(queries_served = format(queries_served, nsmall=0, big.mark=","),
+         query_fees_grt = format(round(query_fees_grt,2), nsmall=0, big.mark=",")) , 
+          caption = "Top Indexers Serving Queries over Past 30 Days", 
+          rownames = FALSE,  options = list(pageLength = 10))
+```
+
+
 </details>
 <br>
 
@@ -296,7 +315,8 @@ datatable(braindexer_table %>%
             mutate(braindexer_subgraph = subgraphs,
                    query_fees = str_c(period,": ", query_fees_grt, " GRT")) %>% 
              arrange(desc(period), queries_served) %>%
-            select(braindexer_subgraph, query_fees, indexers, deployment_id, -period, -query_fees_grt), 
+            select(braindexer_subgraph, query_fees, 
+                   indexers, deployment_id, -period, -query_fees_grt), 
           caption = "Queries Served by Braindexer (Past 30D)", 
           rownames = FALSE)
 ```
@@ -309,15 +329,17 @@ datatable(braindexer_table %>%
   
 ```{r, fig.height=6, fig.width=9.5, fig.align="center", echo=FALSE, warning=FALSE, message=FALSE}
 last_3D_data = combined_subgraphs %>% 
+  ungroup() %>% 
   filter(time_period == "Past 3D") %>% 
+  arrange(desc(query_count)) %>% 
+  slice(1:50) %>% 
   mutate(display_name = if_else(is.na(display_name), 
                                 str_c(substr(deployment_id, 1, 4),"-",
                                       str_sub(deployment_id,-4,-1)), display_name),
-         display_name = if_else(braindexer == "Syncing", str_c(display_name," <<"), display_name), 
-         display_name = fct_reorder(display_name, rank)) 
+         display_name = if_else(braindexer == "Syncing", str_c(display_name,"∙"), display_name), 
+         display_name = fct_reorder(display_name, query_count)) 
 
 last_3D_plots = last_3D_data %>% 
-  filter(rank < 40) %>% 
   ggplot(aes(fill=time_period_rank, x=display_name, y=query_count, #color=braindexer,
              text=paste('Subgraph:', display_name, 
                         '<br>Query Rank:', rank, 
@@ -345,7 +367,8 @@ datatable(last_3D_data %>%
                    success_rate = success_rate,
                    avg_latency = str_c(avg_latency, " ms"),
                    display_name = str_replace_all(display_name, " 🧠", ""),
-                   display_name = if_else(braindexer == "Syncing", str_c(">> ", display_name), display_name),
+                   display_name = if_else(braindexer == "Syncing", 
+                                          str_c(display_name), display_name),
                    display_name = replace_na(display_name, "♻️ Deprecated")) %>% 
             select(rank, display_name, query_count, success_rate, avg_latency, deployment_id), 
             caption = "Top Network Subgraphs by Query Volume (Past 3 Days)", 
@@ -390,7 +413,7 @@ datatable(tiered_subgraphs %>%
                    avg_latency = str_c(avg_latency, " ms"),
                    display_name = str_replace_all(display_name, " 🧠", ""),
                    display_name = if_else(braindexer == "Syncing", 
-                                          str_c(">>", display_name), display_name),
+                                          str_c(display_name), display_name),
                    display_name = replace_na(display_name, "♻️ Deprecated")) %>% 
             select(time_period, everything(), -chart_rank, -period_rank, -time_period_rank, -braindexer), 
             caption = "Top Graph Network Subgraphs by Query Volume (Past 14 Days)", 
@@ -428,5 +451,12 @@ ggplotly(combined_plots, tooltip = c("text"))
 ```
 
 </details>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
 <br>
 

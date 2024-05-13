@@ -21,8 +21,6 @@ knitr::include_graphics("query-catcher-header.png")
 rm(list = ls())
 options(scipen = 999)
 
-wallet_to_analyze = "0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e"
-
 library("tidyverse")
 library("janitor")
 library("lubridate")
@@ -33,6 +31,13 @@ source(here("src", "helpers", "notion.R")) #library("notionR")
 source("~/Documents/git/secrets.R")
 source("~/Documents/git/braindexer/thegraphR/thegraphR.R")
 `%notin%` <- Negate(`%in%`)
+
+wallet_to_analyze = "0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e"
+
+time_in_past = as.numeric(as.POSIXct((
+  as.Date(now(), format="%d/%m/%Y")), format="%Y-%m-%d"))
+#time_in_past = as.numeric(as.POSIXct((
+#  as.Date(today(), format="%d/%m/%Y") - 3), format="%Y-%m-%d"))
 ```
 
 <br>
@@ -49,8 +54,7 @@ display_names = bind_rows(
   subgraphDisplayNames(0),
   subgraphDisplayNames(1000),
   subgraphDisplayNames(2000)
-) %>% select(-deployment_id) %>% 
-  filter(network == "mainnet")
+) %>% select(-deployment_id) 
 
 # grab indexer's allocation data
 indexer_allocations = allocationsByIndexer(wallet_to_analyze) %>% 
@@ -77,9 +81,7 @@ indexer_allocations = indexer_allocations %>%
 
 source("~/Documents/git/braindexer/thegraphR/thegraphR.R")
 # check blocks behind to check if unallocating is ok 
-days_in_past = as.numeric(as.POSIXct((
-  as.Date(today(), format="%d/%m/%Y") - 3), format="%Y-%m-%d"))
-blocks_behind_df = maxBlocksBehind(wallet_to_analyze, days_in_past) %>% 
+blocks_behind_df = maxBlocksBehind(wallet_to_analyze, time_in_past) %>% 
   #select(subgraph_deployment_ipfs_hash, avg_indexer_blocks_behind) %>% 
   rename(deployment_id = subgraph_deployment_ipfs_hash,
          blocks_behind = avg_indexer_blocks_behind,
@@ -211,7 +213,7 @@ for (i in 1:nrow(large_unverified_reallocations)) {
   allocate_action = "graph indexer actions queue reallocate "
   network = " --network arbitrum-one"
   cat(paste0(allocate_action, large_unverified_reallocations$deployment_id[i]," ",
-             large_verified_reallocations$allocation_id[i]," ", 
+             large_unverified_reallocations$allocation_id[i]," ", 
              large_unverified_reallocations$allocation[i], network, 
              " # ", large_unverified_reallocations$display_name[i]),sep="\n")
 }
