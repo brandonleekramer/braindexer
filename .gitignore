@@ -5,3 +5,5 @@
 /design/
 braindexer.slackr
 /crons/braindexer.slackr
+/output_dir/
+/intermediates_dir/
