@@ -27,6 +27,7 @@ library("lubridate")
 library("DT")
 library("onchainR")
 library("here")
+library("plotly")
 source(here("src", "helpers", "notion.R")) #library("notionR")
 source("~/Documents/git/secrets.R")
 source("~/Documents/git/braindexer/thegraphR/thegraphR.R")
@@ -35,14 +36,14 @@ source("~/Documents/git/braindexer/thegraphR/thegraphR.R")
 wallet_to_analyze = "0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e"
 
 time_in_past = as.numeric(as.POSIXct((
-  as.Date(now(), format="%d/%m/%Y")), format="%Y-%m-%d"))
+  as.Date(today()-1, format="%d/%m/%Y")), format="%Y-%m-%d"))
 #time_in_past = as.numeric(as.POSIXct((
 #  as.Date(today(), format="%d/%m/%Y") - 3), format="%Y-%m-%d"))
 ```
 
 <br>
 
-### Current Allocation Overview
+### Current Allocation/Queries Served Overview
 
 ```{r, echo=FALSE, warning=FALSE, message=FALSE}
 # total state + signal >> update to subgraph when not broken
@@ -88,20 +89,63 @@ blocks_behind_df = maxBlocksBehind(wallet_to_analyze, time_in_past) %>%
          avg_latency = avg_latency_ms, 
          query_fees = total_query_fees) 
 
+duplicate_display_names = indexer_allocations %>% get_dupes(display_name) %>% distinct(display_name)
+
 indexer_allocations = indexer_allocations %>% 
   left_join(blocks_behind_df, by = "deployment_id") %>% 
-  select(display_name, allocation, proportion, blocks_behind, deployment_id, allocation_id, everything())
+  mutate(query_fees = replace_na(query_fees, 0),
+         query_count = replace_na(query_count, 0),
+         success_rate = replace_na(success_rate, 0),
+         avg_latency = replace_na(avg_latency, 0),
+         display_name = if_else((
+           display_name %in% duplicate_display_names$display_name
+           & proportion < 0.1), str_c(display_name, " (N-1)"), display_name)) %>% 
+  arrange(desc(blocks_behind)) %>% 
+  select(display_name, allocation, proportion, blocks_behind, 
+         deployment_id, allocation_id, everything())
+
+served_allocations = indexer_allocations %>% filter(query_count > 0)
 
 viz_indexer_allocations = indexer_allocations %>% select(
-  display_name, allocation, proportion, blocks_behind, success_rate,
-  avg_latency, query_count, query_fees, deployment_id)
+  display_name, blocks_behind, query_count, query_fees, 
+  success_rate, avg_latency, allocation, proportion, deployment_id)
 rm(duplicates_check)
+```
 
+<br>
+
+```{r, fig.height=4.5, fig.width=9.5, fig.align="center", echo=FALSE, warning=FALSE, message=FALSE}
+viz_indexer_chart = viz_indexer_allocations %>% 
+  filter(query_count > 0) %>% 
+  mutate(display_name = fct_reorder(display_name, query_count)) %>% 
+  ggplot(aes(x=display_name, y=query_count, 
+             text=paste('Subgraph:', display_name, 
+                        '<br>Query Count:', query_count, 
+                        '<br>Query Fees (GRT):', query_fees,
+                        '<br>Success Rate:', success_rate, 
+                        '<br>Avg Latency:', avg_latency, "ms",
+                        '<br>Proportion:', proportion,
+                        '<br>Allocation Amount:', allocation))) +
+  geom_bar(stat="identity", fill="#054C70", width = 0.5, position = position_dodge(width=0.7)) +
+  theme_minimal() +
+  theme(plot.title = element_text(size=14, face="bold", hjust=0.5),
+        plot.subtitle = element_text(size=11, hjust=0.5),
+        axis.title.x=element_blank(),
+        axis.text.x = element_text(size=4, angle = 45, vjust = 0.5, hjust=1),
+        legend.position = "none") +
+  ggtitle("Queries Served by Indexer (Past 1D)") + 
+  ylab("Number of Queries") 
+ggplotly(viz_indexer_chart, tooltip = c("text"))
+```
+
+<br>
+
+```{r, echo=FALSE}
 # visualize tabe
 datatable(viz_indexer_allocations %>% select(-deployment_id), 
   caption = "Current Allocations Overview", rownames = FALSE)
 ```
-<br>
+
 
 ### Indexer Setup
 
