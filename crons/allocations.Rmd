@@ -1,0 +1,506 @@
+---
+output: html_document
+---
+
+```{css, echo=FALSE}
+/* this chunk of code centers all of the headings */
+h1, h2 {
+  text-align: center;
+}
+```
+
+```{r header, echo=FALSE, fig.align="center", out.width = '150%'}
+knitr::include_graphics("query-catcher-header.png")
+```
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+rm(list = ls())
+options(scipen = 999)
+
+wallet_to_analyze = "0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e"
+#wallet_to_analyze ="0x550c1f4814a85aa10f5f061ca8c45e2ee9620226"
+
+library("tidyverse")
+library("lubridate")
+library("plotly")
+library("DT")
+library("scales")
+library("janitor")
+#library("notionR")
+library("onchainR")
+library("here")
+source(here("src", "helpers", "notion.R"))
+
+source("~/Documents/git/secrets.R")
+source("~/Documents/git/braindexer/thegraphR/thegraphR.R")
+indexers = read_csv("~/Documents/git/braindexer/data/indexers.csv")
+
+time_in_past = as.numeric(as.POSIXct((
+  as.Date(today()-1, format="%d/%m/%Y")), format="%Y-%m-%d"))
+#time_in_past = as.numeric(as.POSIXct((
+#  as.Date(today(), format="%d/%m/%Y") - 3), format="%Y-%m-%d"))
+
+grt_price = getPriceGRT(braindexer_api_key)
+
+unix_today = as.numeric(as.POSIXct((as.Date(today(), format="%d/%m/%Y")), format="%Y-%m-%d"))
+unix_before_1 = as.numeric(as.POSIXct((as.Date(today(), format="%d/%m/%Y") - 1), format="%Y-%m-%d"))
+unix_before_3 = as.numeric(as.POSIXct((as.Date(today(), format="%d/%m/%Y") - 3), format="%Y-%m-%d"))
+unix_before_7 = as.numeric(as.POSIXct((as.Date(today(), format="%d/%m/%Y") - 7), format="%Y-%m-%d"))
+unix_before_14 = as.numeric(as.POSIXct((as.Date(today(), format="%d/%m/%Y") - 14), format="%Y-%m-%d"))
+unix_before_30 = as.numeric(as.POSIXct((as.Date(today(), format="%d/%m/%Y") - 30), format="%Y-%m-%d"))
+
+my_query_key = "hosted"
+qos_oracle = "https://api.thegraph.com/subgraphs/name/juanmardefago/gateway-qos-oracle"
+network_subgraph = "https://api.thegraph.com/subgraphs/name/graphprotocol/graph-network-arbitrum"
+
+#source("~/Documents/git/braindexer/thegraphR/thegraphR.R")
+braindexer_allocations = allocationsByIndexer("0x920fdeb00ee04dd72f62d8a8f80f13c82ef76c1e")
+braindexer_syncing = braindexer_allocations$deployment_id
+subgraphs_metadata = bind_rows(
+    subgraphDisplayNames(0),
+    subgraphDisplayNames(1000),
+    subgraphDisplayNames(2000)
+) 
+
+subgraphs_before_1 = bind_rows(
+  queryVolumeByDeploymentOverTime(unix_before_1, "mainnet", subgraphs_metadata),
+  queryVolumeByDeploymentOverTime(unix_before_1, "matic", subgraphs_metadata),
+  queryVolumeByDeploymentOverTime(unix_before_1, "arbitrum-one", subgraphs_metadata)) %>% 
+  mutate(braindexer = if_else(
+    deployment_id %in% braindexer_syncing, "Syncing", "Not Syncing"),
+         time_period_rank = "4", time_period = "Past 1D")
+
+subgraphs_before_3 = bind_rows(
+  queryVolumeByDeploymentOverTime(unix_before_3, "mainnet", subgraphs_metadata),
+  queryVolumeByDeploymentOverTime(unix_before_3, "matic", subgraphs_metadata),
+  queryVolumeByDeploymentOverTime(unix_before_3, "arbitrum-one", subgraphs_metadata)) %>% 
+  mutate(braindexer = if_else(
+    deployment_id %in% braindexer_syncing, "Syncing", "Not Syncing"),
+         time_period_rank = "3", time_period = "Past 3D")
+
+subgraphs_before_14 = bind_rows(
+  queryVolumeByDeploymentOverTime(unix_before_14, "mainnet", subgraphs_metadata),
+  queryVolumeByDeploymentOverTime(unix_before_14, "matic", subgraphs_metadata),
+  queryVolumeByDeploymentOverTime(unix_before_14, "arbitrum-one", subgraphs_metadata)) %>% 
+  mutate(braindexer = if_else(
+    deployment_id %in% braindexer_syncing, "Syncing", "Not Syncing"),
+         time_period_rank = "2", time_period = "Past 14D")
+
+subgraphs_before_30 = bind_rows(
+  queryVolumeByDeploymentOverTime(unix_before_30, "mainnet", subgraphs_metadata),
+  queryVolumeByDeploymentOverTime(unix_before_30, "matic", subgraphs_metadata),
+  queryVolumeByDeploymentOverTime(unix_before_30, "arbitrum-one", subgraphs_metadata)) %>% 
+  mutate(braindexer = if_else(
+    deployment_id %in% braindexer_syncing, "Syncing", "Not Syncing"),
+         time_period_rank = "1", time_period = "Past 30D")
+
+combined_subgraphs = bind_rows(
+  subgraphs_before_1, 
+  subgraphs_before_3,
+  subgraphs_before_14
+)
+
+# can delete later 
+queries_served_by_subgraph = indexersByQueryVolume(unix_before_14)
+queries_by_period = queriesByPeriod(queries_served_by_subgraph)
+
+queries_served_by_subgraph_1 = indexersByQueryVolume(unix_before_1) 
+queries_by_period_1 = queriesByPeriod(queries_served_by_subgraph_1) %>% mutate(period = "1D")
+queries_served_by_subgraph_3 = indexersByQueryVolume(unix_before_3) 
+queries_by_period_3 = queriesByPeriod(queries_served_by_subgraph_3) %>% mutate(period = "3D")
+queries_served_by_subgraph_14 = indexersByQueryVolume(unix_before_14) 
+queries_by_period_14 = queriesByPeriod(queries_served_by_subgraph_14) %>% mutate(period = "14D")
+queries_served_by_subgraph_30 = indexersByQueryVolume(unix_before_30)
+queries_by_period_30 = queriesByPeriod(queries_served_by_subgraph_30) %>% mutate(period = "30D")
+
+combined_queries_by_period = bind_rows(
+  queries_by_period_1, 
+  queries_by_period_3,
+  queries_by_period_14,
+  queries_by_period_30
+) %>% left_join(
+    queries_by_period_30 %>% 
+      select(rank, wallet_address) %>% 
+      rename(rank_30d = rank), by = "wallet_address") %>% 
+  select(rank_30d, everything()) %>% 
+  mutate(period = factor(period, levels = c('30D', '14D', '3D', '1D'))) %>% 
+  arrange(rank_30d); rm(queries_by_period_7, queries_by_period_14)
+
+tier1_subgraphs = prepare_tiered_subgraphs(combined_subgraphs, 0, 25)
+tier2_subgraphs = prepare_tiered_subgraphs(combined_subgraphs, 25, 49)
+tier3_subgraphs = prepare_tiered_subgraphs(combined_subgraphs, 50, 74)
+tier4_subgraphs = prepare_tiered_subgraphs(combined_subgraphs, 75, 100)
+
+combined_queries_by_period = combined_queries_by_period %>% 
+  left_join(indexers, by = "wallet_address") %>% 
+  mutate(indexer_name = replace_na(indexer_name, "Unknown Indexer"),
+         indexer_name = if_else(
+           wallet_address == "0xbdfb5ee5a2abf4fc7bb1bd1221067aef7f9de491", 
+           "Upgrade Indexer", indexer_name)) %>% 
+  group_by(indexer_name, period) %>% 
+  summarise(queries_served = sum(queries_served),
+            query_fees_grt = sum(query_fees_grt),
+            subgraphs_served = sum(subgraphs_served),
+            wallet_addresses = paste(wallet_address, collapse = ","))
+
+combined_queries_by_period
+```
+
+<br>
+
+<details>
+  <br>
+  <summary><font size="3"> **Indexers Overview** </font></summary>
+
+```{r, fig.height=5.5, fig.width=9.5, fig.align="center", echo=FALSE, warning=FALSE, message=FALSE}
+indexers_rank30d = combined_queries_by_period %>% 
+  filter(period == "30D") %>% 
+  arrange(desc(queries_served)) 
+
+indexers_rank30d$rank_30d <-  rank(-indexers_rank30d$queries_served)
+
+indexers_plot = combined_queries_by_period %>%
+  left_join(indexers_rank30d %>% select(rank_30d, indexer_name), by = "indexer_name") %>% 
+  filter(rank_30d < 26) %>% 
+  arrange(rank_30d) %>% 
+  #left_join(indexers %>% group_by(), by = "indexer_name") %>% 
+  mutate(indexer_name = str_replace_all(indexer_name, "Braindexer", "Braindexer"),
+         indexer_name = fct_reorder(indexer_name, rank_30d)) %>% 
+  ggplot(aes(fill=period, x=fct_reorder(indexer_name, rank_30d), y=queries_served, group = period,
+             text=paste0('Indexer: ', indexer_name, 
+                         #'<br>Wallet: ', wallet_address, 
+                         '<br>',period,' Rank: ', rank_30d, 
+                         '<br>',period,' Queries: ', format(queries_served, nsmall=0, big.mark=","),
+                         '<br>',period,' Subgraphs Served: ', subgraphs_served))) + 
+  geom_bar(stat="identity", width = 0.5, position = position_dodge(width=0.7)) +
+  #geom_segment(aes(x=wallet_address, xend=wallet_address, y=0, yend=queries_served), linewidth = 1.2) +
+  #geom_point(size=2, alpha=1, stroke=1) +
+  theme_minimal() +
+  theme(panel.background = element_rect(
+        fill = "white", colour = "white", size = 0.5, linetype = "solid"),
+        plot.title = element_text(size=14, face="bold", hjust=0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size=6, family = "Arial", colour="#000000"),
+        axis.text.x = element_text(size=7, angle = 45, vjust = 0.5, hjust=1),
+        axis.text.y = element_text(size=6, family = "Arial", colour="#000000"),
+        legend.position = "none") +
+   labs(title="The Graph's Indexers - Queries Served (Top 25 - Past 30D)", 
+        y = "Queries Served by Indexer (Past 30D)") +
+   scale_fill_manual(values=c("#054C70", "#00CED4", "#089DEA", "#E9A1C9")) #+
+   #scale_y_continuous(labels = comma)
+ggplotly(indexers_plot, tooltip = c("text")) 
+```
+```{r, echo=FALSE}
+indexers_1d = combined_queries_by_period %>% 
+  filter(period == "1D") %>% 
+  arrange(desc(queries_served)) %>% 
+  mutate(queries_1d = format(queries_served, nsmall=0, big.mark=","),
+         fees_1d = format(round(query_fees_grt,2), nsmall=0, big.mark=","),
+         subgraphs_1d = format(subgraphs_served, nsmall=0, big.mark=",")) %>%
+  select(indexer_name, queries_1d, fees_1d, subgraphs_1d)
+
+indexers_30d = combined_queries_by_period %>% 
+  filter(period == "30D") %>% 
+  arrange(desc(queries_served)) %>% 
+  mutate(queries_30d = format(queries_served, nsmall=0, big.mark=","),
+         fees_30d = format(round(query_fees_grt,2), nsmall=0, big.mark=","),
+         subgraphs_30d = format(subgraphs_served, nsmall=0, big.mark=",")) %>%
+  select(indexer_name, queries_30d, fees_30d, subgraphs_30d)
+
+indexers_tbl = indexers_1d %>% left_join(indexers_30d, by = 'indexer_name')
+
+datatable(indexers_tbl, 
+          caption = "Top Indexers Serving Queries", 
+          rownames = FALSE,  options = list(pageLength = 10))
+```
+
+</details>
+<br>
+
+<details>
+  <summary><font size="3"> **Allocations Overview** </font></summary>
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# total state + signal >> update to subgraph when not broken
+total_signal = 4036095.56
+total_stake = 752862126.44 + 1616819694.73
+
+# grab all subgraph ID data 
+display_names = bind_rows(
+  subgraphDisplayNames(0),
+  subgraphDisplayNames(1000),
+  subgraphDisplayNames(2000)
+) %>% select(-deployment_id) 
+
+# grab indexer's allocation data
+indexer_allocations = allocationsByIndexer(wallet_to_analyze) %>% 
+  left_join(display_names, by = "subgraph_id") %>% 
+  select(display_name, deployment_id, everything()) %>% 
+  mutate(proportion = round(((signalled_tokens/total_signal))
+         /((staked_tokens/total_stake)),3),
+         proportion = if_else(is.infinite(proportion), 0, proportion)) %>% 
+  rename(allocation = allocated_tokens)
+
+# check + remove duplicates
+duplicates_check = indexer_allocations %>% 
+  distinct(deployment_id, subgraph_id) %>% 
+  janitor::get_dupes(deployment_id) %>% 
+  distinct(deployment_id) %>% left_join(
+    indexer_allocations, by = "deployment_id") %>% 
+  select(deployment_id, subgraph_id) 
+indexer_allocations = indexer_allocations %>% 
+  filter(subgraph_id %notin% 
+           c("Gdu6LrkdgUWdN8z8CmFzgASoKiSsNYt6HbFjTDurdcm1",
+             "CTsPUobKe8nsenurPrg2CcinSoAvLp7XrUZmEWQCzkHS",
+             "DCr8gWACNYngjzTPB1Rg5zWtRBajaiRnkh253hBEDpgN",
+             "FvNi11TDfCsJMyJtXUn9EKFpJR5WhQUD92sZiUqFGBGt"))
+
+source("~/Documents/git/braindexer/thegraphR/thegraphR.R")
+# check blocks behind to check if unallocating is ok 
+blocks_behind_df = maxBlocksBehind(wallet_to_analyze, time_in_past) %>% 
+  #select(subgraph_deployment_ipfs_hash, avg_indexer_blocks_behind) %>% 
+  rename(deployment_id = subgraph_deployment_ipfs_hash,
+         blocks_behind = avg_indexer_blocks_behind,
+         avg_latency = avg_latency_ms, 
+         query_fees = total_query_fees) 
+
+duplicate_display_names = indexer_allocations %>% get_dupes(display_name) %>% distinct(display_name)
+
+indexer_allocations = indexer_allocations %>% 
+  left_join(blocks_behind_df, by = "deployment_id") %>% 
+  mutate(query_fees = replace_na(query_fees, 0),
+         query_count = replace_na(query_count, 0),
+         success_rate = replace_na(success_rate, 0),
+         avg_latency = replace_na(avg_latency, 0),
+         display_name = if_else((
+           display_name %in% duplicate_display_names$display_name
+           & proportion < 0.1), str_c(display_name, " (N-1)"), display_name)) %>% 
+  arrange(desc(blocks_behind)) %>% 
+  select(display_name, allocation, proportion, blocks_behind, 
+         deployment_id, allocation_id, everything())
+
+served_allocations = indexer_allocations %>% filter(query_count > 0)
+
+viz_indexer_allocations = indexer_allocations %>% select(
+  display_name, blocks_behind, query_count, query_fees, 
+  success_rate, avg_latency, allocation, proportion, deployment_id)
+rm(duplicates_check)
+```
+
+<br>
+
+```{r, fig.height=5.5, fig.width=9.5, fig.align="center", echo=FALSE, warning=FALSE, message=FALSE}
+viz_indexer_chart = viz_indexer_allocations %>% 
+  filter(query_count > 0) %>% 
+  mutate(display_name = fct_reorder(display_name, -query_count)) %>% 
+  ggplot(aes(x=display_name, y=query_count, 
+             text=paste('Subgraph:', display_name, 
+                        '<br>Query Count:', query_count, 
+                        '<br>Query Fees (GRT):', query_fees,
+                        '<br>Success Rate:', success_rate, 
+                        '<br>Avg Latency:', avg_latency, "ms",
+                        '<br>Proportion:', proportion,
+                        '<br>Allocation Amount:', allocation))) +
+  geom_bar(stat="identity", fill="#00CED4", width = 0.5, 
+           position = position_dodge(width=0.7)) +
+  theme_minimal() +
+  theme(plot.title = element_text(size=14, face="bold", hjust=0.5),
+        plot.subtitle = element_text(size=11, hjust=0.5),
+        axis.title.x=element_blank(),
+        axis.text.x = element_text(size=4, angle = 45, vjust = 0.5, hjust=1),
+        legend.position = "none") +
+  ggtitle("Queries Served by Indexer (Past 1D)") + 
+  ylab("Number of Queries") 
+ggplotly(viz_indexer_chart, tooltip = c("text"))
+```
+
+<br>
+
+```{r, echo=FALSE}
+# visualize tabe
+datatable(viz_indexer_allocations %>% select(-deployment_id), 
+  caption = "Current Allocations Overview", rownames = FALSE)
+```
+
+</details>
+<br>
+
+<details>
+  <summary><font size="3"> **Reallocation Actions** </font></summary>
+
+##### Indexer Setup
+
+```{shell}
+# connect to ethereum/arbitrum
+ssh graph@5.9.85.100 
+docker run --entrypoint /bin/bash -it ghcr.io/graphprotocol/indexer-cli:v0.20.22
+graph indexer connect http://5.9.85.100:30801
+
+# check status 
+graph indexer status --network arbitrum-one
+graph indexer actions get --status queued --network arbitrum-one
+graph indexer actions get all --network arbitrum-one
+
+# allocate to arbitrum
+graph indexer rules prepare deployment_id --network arbitrum-one
+graph indexer actions queue allocate deployment_id amount_1 --network arbitrum-one
+graph indexer actions queue unallocate deployment_id allocation_id --network arbitrum-one
+graph indexer actions queue reallocate deployment_id allocation_id amount_1 --network arbitrum-one
+graph indexer actions approve id_1 --network arbitrum-one
+graph indexer actions execute approved
+
+# prep 
+graph indexer rules offchain deployment_id
+curl -XPOST https://api.thegraph.com/ipfs/api/v0/cat\?arg\=deployment_id -s | grep graft -A 1
+
+# force close 
+graph indexer actions queue unallocate deployment_id allocation_id 0x0 true --force --network arbitrum-one
+```
+
+##### Minimum Allocations: QoS Verified
+
+```{r, echo=FALSE, comment=NA}
+min_allocation = 5000
+min_proportion = 1.1
+sync_threshold = 5
+
+reallocations_verified = indexer_allocations %>% 
+  filter((allocation < (min_allocation+1) | proportion < min_proportion) 
+         & (blocks_behind < sync_threshold & !is.na(blocks_behind))) 
+
+for (i in 1:nrow(reallocations_verified)) {
+  allocate_action = "graph indexer actions queue reallocate "
+  network = " --network arbitrum-one"
+  cat(paste0(allocate_action, reallocations_verified$deployment_id[i]," ",
+             reallocations_verified$allocation_id[i]," ", 1000, network, " # ",
+             reallocations_verified$display_name[i]),sep="\n")
+}
+cat("graph indexer actions approve transaction_ids --network arbitrum-one\ngraph indexer actions execute approved")
+```
+
+##### Large Reallocations: QoS Verified
+
+```{r, echo=FALSE, comment=NA}
+research_allocations = bind_rows(reallocations_verified)
+
+research_allocations = indexer_allocations %>% 
+  filter(deployment_id %notin% research_allocations$deployment_id) %>% 
+  select(display_name, allocation, proportion, blocks_behind, deployment_id, allocation_id, everything())
+
+large_verified_reallocations = research_allocations %>% 
+  filter((proportion > min_proportion) & (blocks_behind < sync_threshold & !is.na(blocks_behind)))  
+
+for (i in 1:nrow(large_verified_reallocations)) {
+  allocate_action = "graph indexer actions queue reallocate "
+  network = " --network arbitrum-one"
+  cat(paste0(allocate_action, large_verified_reallocations$deployment_id[i]," ",
+             large_verified_reallocations$allocation_id[i]," ", 
+             large_verified_reallocations$allocation[i], network," # ",
+             large_verified_reallocations$display_name[i]),sep="\n")
+}
+cat("graph indexer actions approve transaction_ids --network arbitrum-one\ngraph indexer actions execute approved")
+```
+
+##### QoS Unverified
+
+```{r, echo=FALSE, comment=NA}
+remaining_allocations = bind_rows(reallocations_verified, large_verified_reallocations)
+
+large_unverified_reallocations = indexer_allocations %>% 
+  filter(deployment_id %notin% remaining_allocations$deployment_id)
+
+for (i in 1:nrow(large_unverified_reallocations)) {
+  allocate_action = "graph indexer actions queue reallocate "
+  network = " --network arbitrum-one"
+  cat(paste0(allocate_action, large_unverified_reallocations$deployment_id[i]," ",
+             large_unverified_reallocations$allocation_id[i]," ", 
+             large_unverified_reallocations$allocation[i], network, 
+             " # ", large_unverified_reallocations$display_name[i]),sep="\n")
+}
+cat("graph indexer actions approve transaction_ids --network arbitrum-one\ngraph indexer actions execute approved")
+```
+
+##### Allocations Summary
+
+```{r, echo=FALSE, comment=NA}
+check_for_remaining = bind_rows(
+  reallocations_verified %>% 
+    mutate(allocation_type = "Minimum Verified", new_allocation = 1000), 
+  large_verified_reallocations %>% 
+    mutate(allocation_type = "Large Verified", new_allocation = allocation), 
+  large_unverified_reallocations %>% 
+    mutate(allocation_type = "QoS Unverified", new_allocation = allocation)
+)
+
+check_for_remaining = check_for_remaining %>%
+  group_by(allocation_type) %>% 
+  count() %>% 
+  arrange(desc(n)) %>% 
+  rename(count = n) %>% 
+  ungroup() %>% 
+  add_row(allocation_type = "GRT Reallocate (Before Profits)", 
+          count = (sum(check_for_remaining$allocation) - sum(check_for_remaining$new_allocation)))
+
+datatable(check_for_remaining, 
+  caption = "New Allocations Overview", rownames = FALSE)
+```
+
+</details>
+<br>
+
+<details>
+  <br>
+  <summary><font size="3"> **Reallocation Targets** </font></summary>
+  
+```{r, fig.height=6, fig.width=9.5, fig.align="center", echo=FALSE, warning=FALSE, message=FALSE}
+last_3D_data = combined_subgraphs %>% 
+  ungroup() %>% 
+  filter(time_period == "Past 3D") %>% 
+  arrange(desc(query_count)) %>% 
+  slice(1:50) %>% 
+  mutate(display_name = if_else(is.na(display_name), 
+                                str_c(substr(deployment_id, 1, 4),"-",
+                                      str_sub(deployment_id,-4,-1)), display_name),
+         display_name = if_else(braindexer == "Syncing", str_c(display_name," >"), display_name), 
+         display_name = fct_reorder(display_name, -query_count)) 
+
+last_3D_plots = last_3D_data %>% 
+  ggplot(aes(fill=braindexer, x=display_name, y=query_count, 
+             fill=braindexer,
+             text=paste('Subgraph:', display_name, 
+                        '<br>Query Rank:', rank, 
+                        '<br>Time Period:', time_period, 
+                        '<br>Period Queries:', format(query_count, nsmall=0, big.mark=","),
+                        '<br>Success rate:', success_rate, 
+                        '<br>Avg latency:', avg_latency, "ms"))) +
+  geom_bar(stat="identity", width = 0.5, position = position_dodge(width=0.7)) +
+  theme_minimal() +
+  theme(plot.title = element_text(size=14, face="bold", hjust=0.5),
+        plot.subtitle = element_text(size=11, hjust=0.5),
+        axis.title.x=element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1),
+        legend.position = "none") +
+  ggtitle("Top Graph Network Subgraphs by Query Volume (Past 3D - Top 40)") + 
+  ylab("Number of Queries") +
+  scale_fill_manual(values=c("#054C70","#00CED4")) + 
+  scale_y_continuous(labels = comma)
+ggplotly(last_3D_plots, tooltip = c("text")) 
+```
+
+```{r, echo=FALSE}
+datatable(last_3D_data %>% 
+            mutate(query_count = format(query_count, nsmall=0, big.mark=","),
+                   success_rate = success_rate,
+                   avg_latency = str_c(avg_latency, " ms"),
+                   display_name = str_replace_all(display_name, " 🧠", ""),
+                   display_name = if_else(braindexer == "Syncing", 
+                                          str_c(display_name), display_name),
+                   display_name = replace_na(display_name, "♻️ Deprecated")) %>% 
+            select(display_name, query_count, success_rate, avg_latency, deployment_id), 
+            caption = "Top Network Subgraphs by Query Volume (Past 3 Days)", 
+            rownames = FALSE)
+```
+
+</details>
+<br>
+

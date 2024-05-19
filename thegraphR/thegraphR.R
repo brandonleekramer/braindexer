@@ -1,4 +1,6 @@
 
+`%notin%` <- Negate(`%in%`)
+
 # query_volumeByDeployment gets query volume over past N days for top 1000 subgraphs
 # TODO: Build out support for multiple chains and multiple gateways in query 
 # TODO: Add autopagination and subgraph names to this query
