@@ -4,9 +4,10 @@
 # query_volumeByDeployment gets query volume over past N days for top 1000 subgraphs
 # TODO: Build out support for multiple chains and multiple gateways in query 
 # TODO: Add autopagination and subgraph names to this query
-queryVolumeByDeployment = function(unix_timestamp, chain_id, gateway_id){
+queryVolumeByDeployment = function(unix_timestamp, chain_id, gateway_id, skip_n){
   dataOutput = str_c('{queryDailyDataPoints(
-      first: 1000
+      first: 1000,
+      skip:',skip_n,'
       where: {
         chain_id: "',chain_id,'", 
         gateway_id: "',gateway_id,'", 
@@ -91,9 +92,10 @@ allocationsByIndexer = function(wallet_address){
   dataOutput
 }
 
-indexersByQueryVolume = function(unix_timestamp){
+indexersByQueryVolume = function(unix_timestamp, skip_n){
   dataOutput = str_c('{
   indexers(
+      skip:',skip_n,', 
       first: 1000, 
       orderBy: id, 
       orderDirection: asc) {
@@ -108,6 +110,7 @@ indexersByQueryVolume = function(unix_timestamp){
       query_count
       total_query_fees
       avg_query_fee
+      chain_id
       }
     }
   }')
@@ -209,7 +212,7 @@ prepare_tiered_subgraphs = function(data, lowerbound, upperbound){
 queryVolumeByDeploymentOverTime = function(unix_timestamp, chain_id, subgraphs_metadata){
   
   data_output = queryVolumeByDeployment(
-    unix_timestamp, chain_id, "mainnet-arbitrum") %>% 
+    unix_timestamp, chain_id, "mainnet-arbitrum",0) %>% 
     rename(success_rate = gateway_query_success_rate,
            avg_latency = avg_gateway_latency_ms) %>% 
     mutate(success_rate = round(as.numeric(success_rate),4),
@@ -233,14 +236,15 @@ queriesByPeriod = function(data){
     group_by(wallet_address) %>% 
     summarise(queries_served = sum(queries_served),
               query_fees_grt = sum(as.numeric(query_fees_grt)),
-              query_fees_grt = round(sum(query_fees_grt),2)) %>% 
+              query_fees_grt = round(sum(query_fees_grt),2),
+              chains_served  = n_distinct(chain_id)) %>% 
     arrange(-queries_served) %>% 
     left_join(data %>% 
                 group_by(wallet_address) %>% 
                 summarise(subgraphs_served = n_distinct(subgraph_deployment_ipfs_hash)), 
               by = "wallet_address") %>% 
     mutate(rank = rank(-queries_served, ties.method= "first")) %>%
-    select(rank, wallet_address, queries_served, subgraphs_served, query_fees_grt)
+    select(rank, wallet_address, queries_served, query_fees_grt, subgraphs_served, chains_served)
   dataOutput
 }
 
