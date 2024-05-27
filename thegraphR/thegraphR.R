@@ -1,6 +1,10 @@
 
 `%notin%` <- Negate(`%in%`)
 
+get_unix = function(timestamp){
+  as.numeric(as.POSIXct((as.Date(timestamp, format="%d/%m/%Y")), format="%Y-%m-%d"))
+}
+
 # query_volumeByDeployment gets query volume over past N days for top 1000 subgraphs
 # TODO: Build out support for multiple chains and multiple gateways in query 
 # TODO: Add autopagination and subgraph names to this query
@@ -293,10 +297,10 @@ getDeploymentStats = function(my_api_key){
     }
   }')
   
-  #total_staked = getGraphArbitrumStats("staked_tokens") + getGraphArbitrumStats("delegated_tokens")
-  #total_signal = getGraphArbitrumStats("signalled_tokens")
-  total_staked = 750309625.47 + 1585059501.99
-  total_signal = 4149662.62
+  total_staked = getGraphArbitrumStats("staked_tokens") + getGraphArbitrumStats("delegated_tokens")
+  total_signal = getGraphArbitrumStats("signalled_tokens")
+  #total_staked = 750309625.47 + 1585059501.99
+  #total_signal = 4149662.62
   
   dataOutput = query_subgraph(graphql_query = dataOutput,
                               subgraph_id = "DZz4kDTdmzWLWsV373w2bSmoar3umKKH9y82SUKr5qmp",
@@ -344,7 +348,42 @@ maxBlocksBehind = function(indexer_wallet, unix_day_start){
   dataOutput
 }
 
+rewardsByAllocation = function(block_start, skip_n){
+  metadataQuery = str_c('{
+  allocations(
+    first: 1000 skip: ',skip_n,' orderBy: allocatedTokens orderDirection: desc
+    where: {_change_block: {number_gte: ',block_start,'}, indexingDelegatorRewards_not: "0"}
+  ) { indexer { id }
+    id allocatedTokens indexingIndexerRewards indexingDelegatorRewards queryFeesCollected
+  }
+}')
+  
+  # clean subgraph data 
+  networkSubgraph = "https://api.thegraph.com/subgraphs/name/graphprotocol/graph-network-arbitrum"
+  metadataQuery = query_hosted_subgraph(metadataQuery, networkSubgraph)
+  metadataQuery = metadataQuery$allocations  
+  #metadataQuery = unnest_longer(
+  #  metadataQuery, "indexer", indices_include = FALSE) 
+  metadataQuery = metadataQuery %>% 
+    mutate(allocation_id = id, 
+           allocated_tokens = as.numeric(allocatedTokens)/(10^18),
+           indexer_rewards = as.numeric(indexingIndexerRewards)/(10^18),
+           delegator_rewards = as.numeric(indexingDelegatorRewards)/(10^18),
+           query_fees = as.numeric(queryFeesCollected)/(10^18)) %>% 
+    select(indexer, allocation_id, allocated_tokens, 
+           indexer_rewards, delegator_rewards, query_fees) %>% 
+    unnest(indexer) %>% rename(wallet_address = id)
+  metadataQuery
+}
 
+get_block_number = function(timestamp, my_api_key){
+  ts_query = str_c('{ blocks( first: 1, where: {timestamp: "',timestamp,'"}) {number timestamp}}')
+  ts_query = query_subgraph(graphql_query = ts_query,
+                            subgraph_id = "JBnWrv9pvBvSi2pUZzba3VweGBTde6s44QvsDABP47Gt",
+                            api_key = my_api_key)
+  ts_query = as.numeric(ts_query$blocks$number)
+  ts_query
+}
 
 
 
